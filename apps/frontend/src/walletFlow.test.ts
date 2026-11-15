@@ -69,7 +69,7 @@ import {
   fetchRiftTokenWallet,
   parseRiftTokenAmount,
   sendApproveResourceTokenTransaction,
-  sendDepositResourceTransaction,
+  sendDepositResourcesTransaction,
   sendCreateColonyTransaction,
   sendJoinAttackMissionTransaction,
   sendLaunchAttackMissionTransaction,
@@ -2661,7 +2661,7 @@ describe("walletFlow", () => {
     });
 
     await expect(sendApproveResourceTokenTransaction(provider, account, token, contract, 1_500_000n)).resolves.toBe("0xrift1");
-    await expect(sendDepositResourceTransaction(provider, account, contract, "7", 0, 1_500_000n)).resolves.toBe("0xrift2");
+    await expect(sendDepositResourcesTransaction(provider, account, contract, "7", { metal: 1_500_000n, deuterium: 20n })).resolves.toBe("0xrift2");
 
     expect(requests).toEqual([
       {
@@ -2680,7 +2680,8 @@ describe("walletFlow", () => {
           {
             from: account,
             to: contract,
-            data: encodeGameCall("0x25819e15", [7, 0, 1_500_000n]),
+            // depositMarketResources(uint256,(uint128,uint128,uint128))
+            data: encodeGameCall("0xc69f15d0", [7, 1_500_000n, 0, 20n]),
           },
         ],
       },
@@ -3675,7 +3676,7 @@ describe("walletFlow", () => {
       () => sendStartDefenseProductionTransaction(walletProvider, account, contract, "7", 0, 2),
       () => sendStartResearchTransaction(walletProvider, account, contract, "7", 12),
       () => sendApproveResourceTokenTransaction(walletProvider, account, "0x3333333333333333333333333333333333333333", contract, 1_500_000n),
-      () => sendDepositResourceTransaction(walletProvider, account, contract, "7", 0, 1_500_000n),
+      () => sendDepositResourcesTransaction(walletProvider, account, contract, "7", { metal: 1_500_000n }),
     ];
 
     for (let index = 0; index < submissions.length; index += 1) {

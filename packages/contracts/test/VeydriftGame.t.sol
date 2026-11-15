@@ -12100,6 +12100,55 @@ contract VeydriftGameTest is Test {
         assertEq(game.activeFleetMissionCount(player), 0);
     }
 
+    function testRiftBatchDepositInjectsSeveralResourcesInOneCall() public {
+        vm.prank(player);
+        uint256 planetId = game.startPlanet{value: 0.05 ether}();
+        _setBuildingLevel(planetId, Building.InterdimensionalRiftStabilizer, 1);
+        _setResources(planetId, 1_000, 1_000, 1_000);
+
+        metalToken.mint(player, 1_000);
+        crystalToken.mint(player, 1_000);
+        vm.startPrank(player);
+        metalToken.approve(address(game), 300);
+        crystalToken.approve(address(game), 200);
+        vm.stopPrank();
+
+        bytes memory batch = abi.encodeWithSignature(
+            "depositMarketResources(uint256,(uint128,uint128,uint128))", planetId, 300, 200, 0
+        );
+        bytes memory nothing = abi.encodeWithSignature(
+            "depositMarketResources(uint256,(uint128,uint128,uint128))", planetId, 0, 0, 0
+        );
+        vm.warp(block.timestamp + 1);
+
+        vm.prank(player);
+        (bool empty,) = address(game).call(nothing);
+        assertFalse(empty);
+
+        vm.expectEmit(address(game));
+        emit VeydriftGameStorage.MarketResourceDeposited(player, planetId, Resource.Metal, 300);
+        vm.expectEmit(address(game));
+        emit VeydriftGameStorage.MarketResourceDeposited(player, planetId, Resource.Crystal, 200);
+        vm.prank(player);
+        (bool ok,) = address(game).call(batch);
+        assertTrue(ok);
+
+        assertEq(game.planet(planetId).resources.metal, 1_300);
+        assertEq(game.planet(planetId).resources.crystal, 1_200);
+        assertEq(game.planet(planetId).resources.deuterium, 1_000);
+        assertEq(metalToken.balanceOf(player), 700);
+        assertEq(crystalToken.balanceOf(player), 800);
+        assertEq(
+            uint256(vm.load(address(game), keccak256(abi.encode(player, uint256(34))))),
+            block.timestamp
+        );
+
+        // Allowances were exact, so a second batch can't pull more.
+        vm.prank(player);
+        (bool again,) = address(game).call(batch);
+        assertFalse(again);
+    }
+
     function testRiftDepositWorksAndTheRetiredWithdrawalIsGone() public {
         vm.prank(player);
         uint256 planetId = game.startPlanet{value: 0.05 ether}();

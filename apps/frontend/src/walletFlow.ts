@@ -1525,7 +1525,7 @@ const GAME_SELECTORS = {
   abandonPlanet: "0xfa16dddc",
   completeFleetMissionReturn: "0xc2472852",
   createColony: "0x71358ab8",
-  depositResource: "0x25819e15",
+  depositResources: "0xc69f15d0",
   finalizeRiftExtraction: "0xe2f2de34",
   finishDefenseProduction: "0xa5a0d597",
   finishBuildingUpgrade: "0x6ab2f9d4",
@@ -3831,18 +3831,18 @@ export async function sendApproveResourceTokenTransaction(provider: Eip1193Provi
   });
 }
 
-export async function sendDepositResourceTransaction(
+/** Injects every resource in one transaction: depositMarketResources(planetId, (metal, crystal, deuterium)). */
+export async function sendDepositResourcesTransaction(
   provider: Eip1193Provider,
   account: string,
   contractAddress: string,
   planetId: string,
-  resourceId: number,
-  amount: bigint | number | string,
+  amounts: Partial<Record<RiftResourceKey, bigint>>,
 ): Promise<string> {
   return sendWalletTransaction(provider, account, {
     from: account,
     to: contractAddress,
-    data: encodeGameCall(GAME_SELECTORS.depositResource, [planetId, resourceId, amount]),
+    data: encodeGameCall(GAME_SELECTORS.depositResources, [planetId, amounts.metal ?? 0n, amounts.crystal ?? 0n, amounts.deuterium ?? 0n]),
   });
 }
 

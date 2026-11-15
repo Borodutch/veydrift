@@ -685,6 +685,9 @@ contract VeydriftGame is VeydriftResourceReserves {
                 case 0 { revert(add(result, 32), mload(result)) }
                 default { return(add(result, 32), mload(result)) }
             }
+        } else if (msg.sig == 0xc69f15d0) {
+            // depositMarketResources(uint256,(uint128,uint128,uint128)); the module touches the player.
+            _delegateToPlanetManagementModule();
         } else if (msg.sig == 0xcc4cc1ea) {
             // Attack launch and ACS modules enforce protection through an internal staticcall so
             // the Rift-aware implementation can stay outside this size-constrained facade. Do not

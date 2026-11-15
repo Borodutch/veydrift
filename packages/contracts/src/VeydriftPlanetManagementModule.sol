@@ -249,18 +249,42 @@ contract VeydriftPlanetManagementModule is VeydriftResourceReserves {
     }
 
     function depositMarketResource(uint256 planetId, Resource resource, uint128 amount) external {
+        _depositMarketResources(planetId, _resourceAmount(resource, amount));
+    }
+
+    /// Injects several resources in one transaction, one MarketResourceDeposited per non-zero
+    /// amount. The Game routes this selector through its fallback (EIP-170 headroom), which
+    /// skips the facade's activity touch, so it happens here.
+    function depositMarketResources(uint256 planetId, Resources calldata amount) external {
+        _touchPlayer(_actingPlayer());
+        _depositMarketResources(planetId, amount);
+    }
+
+    function _depositMarketResources(uint256 planetId, Resources memory amount) private {
+        address player = _actingPlayer();
         _requirePlanetOwner(planetId);
-        _settleDueColonizeArrivals(_actingPlayer());
-        _settleDueCombatArrivals(_actingPlayer());
+        _settleDueColonizeArrivals(player);
+        _settleDueCombatArrivals(player);
         _requireNoPendingMissionResolutionForPlanet(planetId);
         _settleRiftUnlock(planetId);
-        if (amount == 0) revert InvalidQuantity();
+        if (amount.metal == 0 && amount.crystal == 0 && amount.deuterium == 0) {
+            revert InvalidQuantity();
+        }
 
-        _transferReserveIn(resource, amount);
-        Resources memory resourceAmount = _resourceAmount(resource, amount);
-        _increaseInternalResources(resourceAmount);
-        emit MarketResourceDeposited(_actingPlayer(), planetId, resource, amount);
-        _creditResources(planetId, resourceAmount);
+        _transferReserveIn(Resource.Metal, amount.metal);
+        _transferReserveIn(Resource.Crystal, amount.crystal);
+        _transferReserveIn(Resource.Deuterium, amount.deuterium);
+        _increaseInternalResources(amount);
+        if (amount.metal != 0) {
+            emit MarketResourceDeposited(player, planetId, Resource.Metal, amount.metal);
+        }
+        if (amount.crystal != 0) {
+            emit MarketResourceDeposited(player, planetId, Resource.Crystal, amount.crystal);
+        }
+        if (amount.deuterium != 0) {
+            emit MarketResourceDeposited(player, planetId, Resource.Deuterium, amount.deuterium);
+        }
+        _creditResources(planetId, amount);
     }
 
     function protectedResources(uint256 planetId) external view returns (Resources memory) {

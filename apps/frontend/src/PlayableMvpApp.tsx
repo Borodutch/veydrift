@@ -170,7 +170,7 @@ import {
   sendCancelAllianceJoinRequestTransaction,
   sendCreateAllianceTransaction,
   sendCreateColonyTransaction,
-  sendDepositResourceTransaction,
+  sendDepositResourcesTransaction,
   sendDismissAllianceJoinRequestTransaction,
   sendFinalizeRiftExtractionTransaction,
   sendJoinAttackMissionTransaction,
@@ -5263,13 +5263,15 @@ export function PlayableMvpApp({
       }
       const homePlanetId = riftState.homePlanetId;
 
-      void runRiftTransactions(transfers.map(({ resource, amount }) => [
-        `${resource.label} injection`,
-        (provider: Eip1193Provider) => sendDepositResourceTransaction(provider, signerAccount, gameContract, homePlanetId, resource.resourceId, amount),
+      // Every resource in one transaction.
+      const amounts = Object.fromEntries(transfers.map(({ resource, amount }) => [resource.key, amount]));
+      void runRiftTransaction(
+        transfers.length === 1 ? `${transfers[0]!.resource.label} injection` : "Resource injection",
+        (provider: Eip1193Provider) => sendDepositResourcesTransaction(provider, signerAccount, gameContract, homePlanetId, amounts),
         { bodyKind: "planet", planetId: homePlanetId },
-      ]));
+      );
     },
-    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransactions, signerAccount],
+    [account, gameContract, provider, riftState?.homePlanetId, riftState?.riftAvailable, riftState?.unavailableReason, runRiftTransaction, signerAccount],
   );
 
   const handleRequestRiftWithdrawals = useCallback(

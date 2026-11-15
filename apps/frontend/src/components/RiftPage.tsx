@@ -235,7 +235,8 @@ function RiftWorkbench({
         ? tokenWallet.failed ? "Your token balances couldn't be read." : "Reading your token balances."
         : transfers.length === 0 ? `Enter an amount to ${inject ? "inject" : "extract"}.` : undefined;
   const ready = !blocker;
-  const several = (toApprove.length || transfers.length) > 1;
+  // Injection is one transaction; only approvals (one per token) and extractions take several.
+  const several = (inject ? toApprove.length : transfers.length) > 1;
 
   return (
     <section aria-labelledby="rift-title" className="surface grid overflow-hidden rounded-xl md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
