@@ -7050,12 +7050,12 @@ contract VeydriftGameTest is Test {
 
     // #65: synthetic local state, not attribution of the unidentified live screenshot.
     /// forge-config: default.isolate = true
-    function testInventory65TransportOverdueOutboundNeedsSecondVisit() public {
+    function testInventory65TransportOverdueOutboundLandsInOneVisit() public {
         _inventory65Overdue(false);
     }
 
     /// forge-config: default.isolate = true
-    function testInventory65DeployOverdueOutboundNeedsSecondVisit() public {
+    function testInventory65DeployOverdueOutboundLandsInOneVisit() public {
         _inventory65Overdue(true);
     }
 
@@ -7094,8 +7094,7 @@ contract VeydriftGameTest is Test {
             _inventory65Fixture();
         uint256[] memory ids = new uint256[](13);
         for (uint16 i; i < 13; ++i) {
-            // The first child advances this mission to Returning. Appending that child
-            // shifts the next twelve-entry window past its due return, so order two is unfunded.
+            // Order two's ships are on this mission, among thirteen overdue entries.
             uint256 origin = i == 11 ? orders[1].originPlanetId : 2_000 + i;
             if (i != 11) _inventory65Planet(origin, i + 1);
             _inventory65Planet(3_000 + i, i + 21);
@@ -7114,46 +7113,14 @@ contract VeydriftGameTest is Test {
         assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 6);
         assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
         assertEq(game.activeFleetMissionCount(player), 13);
-        uint256 firstId = game.nextFleetId();
-        bytes32 beforeState = _inventory65State(target, orders);
-        _inventory65ExpectMissing();
-        _inventory65Launch(deploy, target, orders);
-        assertEq(
-            _inventory65State(target, orders),
-            beforeState,
-            "funded first order plus lazy credits roll back"
-        );
-        for (uint256 i; i < ids.length; ++i) {
-            (
-                VeydriftGameStorage.FleetMissionStatus status,,,
-                VeydriftGameStorage.Resources memory cargo
-            ) = _fleetMission(ids[i]);
-            assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Outbound));
-            assertEq(keccak256(abi.encode(cargo)), keccak256(abi.encode(orders[0].cargo)));
-            assertEq(
-                keccak256(abi.encode(game.planet(3_000 + i).resources)),
-                keccak256(
-                    abi.encode(VeydriftGameStorage.Resources(1_000_000, 1_000_000, 1_000_000))
-                )
-            );
-            if (i != 11) assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0);
-        }
-        (VeydriftGameStorage.FleetMissionStatus newStatus,,,) = _fleetMission(firstId);
-        assertEq(uint8(newStatus), uint8(VeydriftGameStorage.FleetMissionStatus.None));
-        // Execute the exact first order alone to prove the funded prefix and cursor boundary.
-        VeydriftGameStorage.TransportBatchOrder[] memory prefix =
-            new VeydriftGameStorage.TransportBatchOrder[](1);
-        prefix[0] = orders[0];
-        assertEq(_inventory65Launch(deploy, target, prefix)[0], firstId);
+        // The first child's sweep lands both legs of every visited mission, including order two's,
+        // before order two needs its ships.
+        uint256[] memory launched = _inventory65Launch(deploy, target, orders);
+        assertEq(launched.length, 9);
+        (VeydriftGameStorage.FleetMissionStatus landed,,,) = _fleetMission(ids[11]);
+        assertEq(uint8(landed), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
         assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 0);
-        (VeydriftGameStorage.FleetMissionStatus missed,,,) = _fleetMission(ids[11]);
-        assertEq(uint8(missed), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
-        vm.prank(player);
-        game.renamePlanet(target, "Second bounded visit");
-        (missed,,,) = _fleetMission(ids[11]);
-        assertEq(uint8(missed), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0);
+        assertEq(game.shipCount(orders[1].originPlanetId, Ship.LargeCargo), 0, "spent once");
     }
 
     /// forge-config: default.isolate = true
@@ -7182,16 +7149,21 @@ contract VeydriftGameTest is Test {
         vm.prank(player);
         game.renamePlanet(target, "First bounded visit");
         uint256 outbound;
-        uint256 returning;
+        uint256 returned;
         for (uint256 i; i < ids.length; ++i) {
             (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(ids[i]);
-            if (status == VeydriftGameStorage.FleetMissionStatus.Outbound) ++outbound;
-            if (status == VeydriftGameStorage.FleetMissionStatus.Returning) ++returning;
-            assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0, "one leg per visit");
+            if (status == VeydriftGameStorage.FleetMissionStatus.Outbound) {
+                ++outbound;
+                assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 0, "unvisited stays out");
+            }
+            if (status == VeydriftGameStorage.FleetMissionStatus.Returned) {
+                ++returned;
+                assertEq(game.shipCount(2_000 + i, Ship.LargeCargo), 6, "both legs, once");
+            }
         }
         assertEq(outbound, 1, "thirteenth unique entry remains unvisited");
-        assertEq(returning, 12, "production sweep bound must stay twelve");
-        assertEq(game.activeFleetMissionCount(player), 13);
+        assertEq(returned, 12, "production sweep bound must stay twelve");
+        assertEq(game.activeFleetMissionCount(player), 1);
         // Bounded retries eventually settle all legs without duplicate credits.
         for (uint256 i; i < 4; ++i) {
             vm.prank(player);
@@ -7328,31 +7300,12 @@ contract VeydriftGameTest is Test {
         (uint256 target, VeydriftGameStorage.TransportBatchOrder[] memory orders) =
             _inventory65Fixture();
         uint256 oldId = _inventory65DueTransport(target, orders[0]);
-        bytes32 beforeState = _inventory65State(target, orders);
-        _inventory65ExpectMissing();
-        _inventory65Launch(deploy, target, orders);
-        assertEq(_inventory65State(target, orders), beforeState, "failed batch is atomic");
-        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
-        assertEq(
-            uint8(status),
-            uint8(VeydriftGameStorage.FleetMissionStatus.Outbound),
-            "arrival rolled back too"
-        );
-
-        vm.prank(player);
-        game.renamePlanet(target, "One lazy visit");
-        (status,,,) = _fleetMission(oldId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        assertEq(
-            game.shipCount(orders[0].originPlanetId, Ship.LargeCargo),
-            0,
-            "both deadlines due does not credit both legs"
-        );
-        // Positive control: the already-Returning leg is settled by the first child, then spent.
+        // Both deadlines due: the first child's sweep lands arrival and return in one visit, so
+        // the returned ships fund order one immediately and are credited exactly once.
         uint256[] memory ids = _inventory65Launch(deploy, target, orders);
         assertEq(ids.length, 9);
         assertEq(game.activeFleetMissionCount(player), 9);
-        (status,,,) = _fleetMission(oldId);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
         assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
         for (uint256 i; i < orders.length; ++i) {
             assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
@@ -7424,9 +7377,8 @@ contract VeydriftGameTest is Test {
                 0
             );
         }
+        // Both legs overdue and unvisited: canonical slots and ships stay occupied until a sweep.
         vm.warp(block.timestamp + 30 days);
-        vm.prank(player);
-        game.renamePlanet(target, "Settle outbound legs");
         _setTechnologyLevel(player, Technology.Computer, 7); // canonical 8/8; effective 0/8
         _setResearchQueue(player, Technology.Computer, 8, uint64(block.timestamp)); // effective 0/9
         assertEq(game.activeFleetMissionCount(player), 8);

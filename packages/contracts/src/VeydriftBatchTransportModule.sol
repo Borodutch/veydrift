@@ -633,6 +633,14 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         for (uint256 i; i < dueCount; ++i) {
             _settleLazyMission(due[i]);
         }
+        // A visit settles one leg. Land returns that became due legs in this same visit, so an
+        // overdue mission frees its ships and fleet slot for the action that triggered the sweep.
+        for (uint256 i; i < dueCount; ++i) {
+            FleetMissionStatus status = _fleetMissions[due[i]].status;
+            if (status == FleetMissionStatus.Returning || status == FleetMissionStatus.Recalled) {
+                _settleLazyMission(due[i]);
+            }
+        }
     }
 
     function _settleLazyMission(uint256 id) private {

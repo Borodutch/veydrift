@@ -478,15 +478,13 @@ contract VeydriftMoonSupplyBatchTest is VeydriftMoonSystemTestBase {
         G.TransportBatchOrder[] memory orders = new G.TransportBatchOrder[](2);
         orders[0] = seeded[1];
         orders[1] = seeded[2];
-        _setShipCount(orders[0].originPlanetId, Ship.SmallCargo, 2);
-        _setShipCount(orders[1].originPlanetId, Ship.SmallCargo, 2);
         vm.prank(player);
         uint256[] memory first = _batch().launchTransportBatch(target, orders);
         (,, uint64 back0,) = _fleetMission(first[0]);
         (,, uint64 back1,) = _fleetMission(first[1]);
-        // Both legs overdue but still Outbound: a sweep lands one leg per visit, so the old
-        // aggregate precheck (2 + 2 > 3) rejected slots the second child's sweep frees.
-        _setTechnologyLevel(player, Technology.Computer, 2);
+        // Both legs overdue but still Outbound, each origin's only ship aboard, slots full (2/2).
+        // The first child's sweep must land arrival and return together to free ships and slots.
+        _setTechnologyLevel(player, Technology.Computer, 1);
         vm.warp(back0 > back1 ? back0 : back1);
         assertEq(game.activeFleetMissionCount(player), 2);
         vm.prank(player);
