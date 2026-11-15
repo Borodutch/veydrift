@@ -3,10 +3,8 @@ pragma solidity ^0.8.28;
 
 import {VeydriftResourceReserves} from "./VeydriftResourceReserves.sol";
 import {VeydriftArrivalProgress} from "./libraries/VeydriftArrivalProgress.sol";
-import {VeydriftAntiRaidPrimitives} from "./libraries/VeydriftAntiRaidPrimitives.sol";
 import {VeydriftStagedBattleStorage as Store} from "./libraries/VeydriftStagedBattleStorage.sol";
 import {
-    Technology,
     Ship,
     Defense,
     ProductionOrder,
@@ -747,16 +745,9 @@ contract VeydriftBatchTransportModule is VeydriftResourceReserves {
         if (target.owner == address(0)) revert NoPlanet();
         if (target.owner != _actingPlayer()) revert NotPlanetOwner();
 
-        // Keep legacy planet prechecks unchanged. Body launches reconcile due fleets before
-        // checking each actual slot; a stale aggregate check would reject reusable returned slots.
-        if (!targetIsMoon) {
-            uint256 fleetSlots = VeydriftAntiRaidPrimitives.fleetSlotLimit(
-                _technologyLevels[_actingPlayer()][Technology.Computer]
-            );
-            if (activeFleetMissionCount[_actingPlayer()] + count > fleetSlots) {
-                revert FleetSlotLimitReached(fleetSlots);
-            }
-        }
+        // No aggregate fleet-slot precheck: each child launch sweeps due fleets and then checks its
+        // own slot. Overdue missions land one leg per sweep (arrival, then return), so a precheck
+        // sees stale counts and rejects slots the later children's sweeps free up.
 
         missionIds = new uint256[](count);
         for (uint256 i = 0; i < count; ++i) {

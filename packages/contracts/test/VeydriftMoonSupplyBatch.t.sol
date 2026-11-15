@@ -473,6 +473,32 @@ contract VeydriftMoonSupplyBatchTest is VeydriftMoonSystemTestBase {
         _testPlanetToMoonTransportMovesCargoAndReturnsShips();
     }
 
+    function testReturnedFleetReconciledBeforeNextPlanetBatch() public {
+        (uint256 target, G.TransportBatchOrder[] memory seeded) = _seed(3);
+        G.TransportBatchOrder[] memory orders = new G.TransportBatchOrder[](2);
+        orders[0] = seeded[1];
+        orders[1] = seeded[2];
+        _setShipCount(orders[0].originPlanetId, Ship.SmallCargo, 2);
+        _setShipCount(orders[1].originPlanetId, Ship.SmallCargo, 2);
+        vm.prank(player);
+        uint256[] memory first = _batch().launchTransportBatch(target, orders);
+        (,, uint64 back0,) = _fleetMission(first[0]);
+        (,, uint64 back1,) = _fleetMission(first[1]);
+        // Both legs overdue but still Outbound: a sweep lands one leg per visit, so the old
+        // aggregate precheck (2 + 2 > 3) rejected slots the second child's sweep frees.
+        _setTechnologyLevel(player, Technology.Computer, 2);
+        vm.warp(back0 > back1 ? back0 : back1);
+        assertEq(game.activeFleetMissionCount(player), 2);
+        vm.prank(player);
+        uint256[] memory second = _batch().launchTransportBatch(target, orders);
+        assertEq(second.length, 2);
+        assertEq(game.activeFleetMissionCount(player), 2);
+        for (uint256 i; i < 2; ++i) {
+            (G.FleetMissionStatus status,,,) = _fleetMission(first[i]);
+            assertEq(uint8(status), uint8(G.FleetMissionStatus.Returned));
+        }
+    }
+
     function testLegacyPlanetBatchStillRejectsSameBody() public {
         (uint256 target, G.TransportBatchOrder[] memory orders) = _seed(2);
         vm.prank(player);

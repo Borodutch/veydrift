@@ -7433,28 +7433,12 @@ contract VeydriftGameTest is Test {
         for (uint256 i; i < 8; ++i) {
             assertEq(game.shipCount(orders[i].originPlanetId, Ship.LargeCargo), 0);
         }
-        bytes32 beforeState = _inventory65State(target, orders);
-        vm.expectRevert(
-            abi.encodeWithSelector(VeydriftGameStorage.FleetSlotLimitReached.selector, 8)
-        );
-        _inventory65Launch(deploy, target, orders);
-        assertEq(
-            _inventory65State(target, orders),
-            beforeState,
-            "precheck runs before return and research settlement"
-        );
-        assertEq(game.technologyLevel(player, Technology.Computer), 7);
-        assertTrue(game.researchQueue(player).active);
-        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
-        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returning));
-        // finishResearch runs the ordinary fleet sweep and research completion, then retry.
-        vm.prank(player);
-        game.finishResearch();
-        assertEq(game.activeFleetMissionCount(player), 0);
-        assertEq(game.technologyLevel(player, Technology.Computer), 8);
-        assertFalse(game.researchQueue(player).active);
-        assertEq(game.shipCount(orders[0].originPlanetId, Ship.LargeCargo), 6);
+        // No stale aggregate precheck: each child sweeps the matured returns and research before
+        // checking its own slot, so effective capacity (0/9) admits all nine orders at once.
         assertEq(_inventory65Launch(deploy, target, orders).length, 9);
+        assertEq(game.activeFleetMissionCount(player), 9);
+        (VeydriftGameStorage.FleetMissionStatus status,,,) = _fleetMission(oldId);
+        assertEq(uint8(status), uint8(VeydriftGameStorage.FleetMissionStatus.Returned));
     }
 
     function testLaunchTransportBatchCreatesAtomicOwnedTransports() public {
