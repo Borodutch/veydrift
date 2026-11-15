@@ -16984,12 +16984,22 @@ function fleetMissionIdTopic(missionId: string): string {
   }
 }
 
-function uniqueLossSolution(candidates: BattleLossCandidate[], losses: Resources): BattleLossPick[] | null {
+// The search is exponential in fleet composition. An ACS report's losses cover the whole group, so a
+// member's large mixed fleet can have no exact decomposition and the search never ends (a 1,600-ship
+// 8-type fleet froze the writer on 2026-11-14). Past the budget the answer is "not unique".
+export const LOSS_SOLUTION_STEP_BUDGET = 200_000;
+
+export function uniqueLossSolution(candidates: BattleLossCandidate[], losses: Resources): BattleLossPick[] | null {
   const target = numericResources(losses);
   const solutions: BattleLossPick[][] = [];
+  let steps = 0;
 
   const search = (index: number, remaining: { metal: number; crystal: number; deuterium: number }, picks: BattleLossPick[]) => {
     if (solutions.length > 1) return;
+    if (++steps > LOSS_SOLUTION_STEP_BUDGET) {
+      solutions.push([], []);
+      return;
+    }
     if (remaining.metal === 0 && remaining.crystal === 0 && remaining.deuterium === 0) {
       solutions.push([...picks]);
       return;
