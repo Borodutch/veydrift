@@ -434,8 +434,9 @@ export function RiftSkeleton(): JSX.Element {
     <SkeletonRegion className="grid gap-4" label="Loading Rift state">
       <article className="grid gap-5 rounded-xl surface p-4 sm:p-5">
         <div>
-          <Skeleton className="h-5 w-72 max-w-full" />
-          <Skeleton className="mt-2 h-3.5 w-96 max-w-full" />
+          {/* w-full + max-w: a fixed w-72/w-96 counts toward the grids' min-content width and widened phone layouts. */}
+          <Skeleton className="h-5 w-full max-w-72" />
+          <Skeleton className="mt-2 h-3.5 w-full max-w-96" />
         </div>
         <Skeleton className="h-11 w-full rounded-lg" />
         <div className="grid grid-cols-3 gap-2">

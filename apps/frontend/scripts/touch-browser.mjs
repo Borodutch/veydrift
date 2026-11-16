@@ -6,7 +6,7 @@
 // file as SHARDS processes, each with every SHARDS-th of its tests.
 import { spawn } from "node:child_process";
 
-export const FILES = ["planetPickerTouchBrowser", "levelPopupLayout", "galaxySlots", "productionQueueSizing", "sidebar", "currentState"];
+export const FILES = ["planetPickerTouchBrowser", "levelPopupLayout", "galaxySlots", "productionQueueSizing", "sidebar", "currentState", "riftPage"];
 const SHARDS = { planetPickerTouchBrowser: 2 };
 
 // Resolves to the process's exit code and full log.
