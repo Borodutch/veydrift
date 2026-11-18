@@ -49,5 +49,8 @@
   },
   "devDependencies": {
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "axios": "^1.21.1"
   }
 }

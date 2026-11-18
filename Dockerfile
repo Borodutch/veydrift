@@ -5,9 +5,9 @@
 
 FROM oven/bun:1.4.4-debian@sha256:93d5032fe06d163427822dc1598f420363759bb18155c9cc90eb1be05a64a19e AS bun
 
-# Node.js 22.23.4 (Oct 2026 security release), Bun 1.4.4, and fontconfig with the
+# Node.js 22.23.5 (Nov 2026 security release), Bun 1.4.4, and fontconfig with the
 # DejaVu fonts for the OG-card renderer (sharp). Cached until this block changes.
-FROM node:22.23.4-bookworm-slim@sha256:de170b39439eb0e5a3444ad7d60b015614a381e10fecae2e30ec9e735122f38d AS base
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates fontconfig fonts-dejavu-core \
   && rm -rf /var/lib/apt/lists/*
