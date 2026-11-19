@@ -20,9 +20,10 @@ jobs:
     name: checks (${{ matrix.group }})
     # Same rule as that hook, so other PRs (forks, other authors) use the Linux runner instead
     # of being denied on the Mac.
+    # Renovate's PRs run here too: the Linux runner has no Chrome for the browser checks.
     # Any of the Mac runners takes any group; each keeps its own warm workspace (node_modules,
     # Foundry artifacts, pinned frontend media) in its tool cache.
-    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'backmeupplz') && 'veydrift-backmeupplz-ci' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["backmeupplz","renovate"]'), github.event.pull_request.user.login)) && 'veydrift-backmeupplz-ci' || 'ubuntu-latest' }}
     permissions:
       contents: read
     timeout-minutes: 60
