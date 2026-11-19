@@ -254,3 +254,48 @@ test("a real lease takeover before the prune write deletes nothing through recon
     expect(count()).toBe(0);
   } finally { warn.mockRestore(); f.db.close(); }
 });
+
+test("retention deletes old finalized intents and their signing rows, keeping every held nonce (#754)", () => {
+  const now = { value: Date.parse("2026-10-11T00:00:00.000Z") };
+  const f = fixture(now), old = "2026-08-01T00:00:00.000Z", recent = "2026-10-10T00:00:00.000Z";
+  const intent = f.db.query("INSERT INTO resolver_prepared_intents (chain_id,resolver_address,operation_id,nonce,transaction_hash,membership,status,admission_proven) VALUES (?,?,?,?,?,'[]',?,?)");
+  const reservation = f.db.query("INSERT INTO resolver_signing_reservations (id,chain_id,resolver_address,operation_id,nonce,membership,transferred) VALUES (?,?,?,?,?,'[]',?)");
+  const result = f.db.query("INSERT INTO resolver_signing_results (reservation_id,transaction_hash) VALUES (?,?)");
+  f.db.transaction(() => {
+    for (const n of [1, 2, 3, 4, 5]) { intent.run(chainId, resolver, "op" + n, n, hash(n), "finalized", 1); reservation.run("r" + n, chainId, resolver, "op" + n, n, 1); result.run("r" + n, hash(n)); }
+    intent.run(chainId, resolver, "op6", 6, hash(6), "pending", 0);              // unfinalized at an old nonce
+    intent.run(chainId, resolver, "op7", 7, hash(7), "finalized", 1);            // nonce-recovery lineage
+    f.db.query("INSERT INTO resolver_nonce_recovery (chain_id,resolver_address,nonce,binding,original_hash,max_fee_wei,finalized) VALUES (?,?,7,'{}',?,'1',1)").run(chainId, resolver, hash(7));
+    intent.run(chainId, resolver, "op8", 8, hash(8), "finalized", 1);            // winner and its superseded sibling
+    intent.run(chainId, resolver, "op8", 8, hash(108), "superseded", 0);
+    reservation.run("u3", chainId, resolver, "op3b", 3, 0);                     // untransferred: unknown signing result
+    intent.run(chainId, resolver, "op20", 20, hash(20), "finalized", 1);         // inside the retention window
+    reservation.run("r20", chainId, resolver, "op20", 20, 1); result.run("r20", hash(20));
+    intent.run(chainId, resolver, "op21", 21, hash(21), "confirmed", 1);
+    f.db.query("INSERT INTO resolver_transaction_attempts (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,updated_at) VALUES (?,?,'op1',1,?,'confirmed',?)").run(chainId, resolver, hash(1), old);
+  })();
+  const audit = f.db.query("INSERT INTO resolver_transaction_audit (chain_id,resolver_address,operation_id,nonce,transaction_hash,status,created_at) VALUES (?,?,?,?,NULL,'confirmed',?)");
+  const prune = () => (f.coordinator as unknown as { pruneAuditHistory(c: number, a: Hex, l: () => void): void }).pruneAuditHistory(chainId, address, () => {});
+  const nonces = () => (f.db.query("SELECT nonce FROM resolver_prepared_intents ORDER BY nonce, status").all() as { nonce: number }[]).map((r) => r.nonce);
+  const ids = (table: string, column: string) => (f.db.query(`SELECT ${column} AS id FROM ${table} ORDER BY 1`).all() as { id: string }[]).map((r) => r.id);
+  try {
+    audit.run(chainId, resolver, "op1", 1, old);
+    prune(); // no retained audit row inside the window: no cutoff, nothing deleted
+    expect(nonces()).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 8, 20, 21]);
+    audit.run(chainId, resolver, "op20", 20, recent);
+    now.value += 60_000;
+    prune();
+    expect(nonces()).toEqual([6, 7, 8, 8, 20, 21]); // a nonce with a superseded loser is held whole
+    expect(ids("resolver_signing_reservations", "id")).toEqual(["r20", "u3"]);
+    expect(ids("resolver_signing_results", "reservation_id")).toEqual(["r20"]);
+    expect(ids("resolver_transaction_attempts", "operation_id")).toEqual(["op1"]);
+    // Later audit rows (other operations) can put the cutoff above the last batch: the newest proven
+    // intent still stays, since the nonce overlap checks rely on it.
+    audit.run(chainId, resolver, "randomness:later", 50, new Date(now.value).toISOString());
+    f.db.exec("UPDATE resolver_prepared_intents SET status='finalized' WHERE nonce=21");
+    f.db.exec("DELETE FROM resolver_transaction_audit WHERE nonce=20");
+    now.value += 60_000;
+    prune();
+    expect(nonces()).toEqual([6, 7, 8, 8, 21]);
+  } finally { f.db.close(); }
+});

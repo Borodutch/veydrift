@@ -185,6 +185,8 @@ const defaultAuditRetentionMs = 30 * 24 * 60 * 60_000;
 const maxAuditRetentionMs = 10 * 365 * 24 * 60 * 60_000;
 const auditPruneIntervalMs = 60_000;
 const auditPruneBatchRows = 5_000;
+// Finalized nonces whose intent and signing rows one retention pass deletes (#754).
+const finalizedPruneBatchNonces = 1_000;
 // The sweep cursor is monotonic, so evidence it stepped past is only re-examined by a new sweep.
 const auditPruneRevisitMs = 24 * 60 * 60_000;
 // Live pages plus WAL. Above it, admission, reconciliation and cursor writes stop.
@@ -489,7 +491,10 @@ export class ResolverTransactionCoordinator {
     if (now - state.at < auditPruneIntervalMs) return;
     state.at = now;
     try {
-      await this.withLease(chainId, address, async (assertLease) => this.sweepAuditHistory(chainId, address, state, now, assertLease),
+      await this.withLease(chainId, address, async (assertLease) => {
+        this.sweepAuditHistory(chainId, address, state, now, assertLease);
+        this.pruneFinalizedHistory(chainId, address, now, assertLease);
+      },
         { storageLimitBytes: journalStorageLimitBytes + journalPruneReserveBytes, leaseWaitMs: 0 });
     } catch (error) {
       emitObservabilityEvent({ kind: "resolver_audit_prune_failed", chainId, address, atStorageCeiling: true, reason: safeDiagnosticText(error) }, "warn");
@@ -509,6 +514,7 @@ export class ResolverTransactionCoordinator {
     if (now - state.at < auditPruneIntervalMs) return;
     state.at = now;
     this.sweepAuditHistory(chainId, address, state, now, assertLease);
+    this.pruneFinalizedHistory(chainId, address, now, assertLease);
   }
 
   private sweepAuditHistory(chainId: number, address: Hex, state: { cursor: number; sweepStartedAt: number }, now: number, assertLease: () => void): void {
@@ -544,6 +550,52 @@ export class ResolverTransactionCoordinator {
       emitObservabilityEvent({ kind: "resolver_audit_prune_failed", chainId, address, reason: safeDiagnosticText(error) }, "warn");
     }
   }
+
+  /**
+   * Deletes the intent rows and transferred signing reservations/results of finalized nonces
+   * allocated before the retention window (#754), so the journal stops growing with lifetime traffic. No send
+   * decision reads them: replay and binding checks only touch unfinalized intents, the overlap checks
+   * only look at nonces at or above the current one, and the newest proven intent (the archive
+   * frontier) is kept. Never touched: any nonce with a non-finalized intent (superseded losers keep
+   * their signed bytes, as documented), any nonce-recovery nonce, untransferred reservations, and resolver_transaction_attempts (a confirmed
+   * attempt suppresses a re-send of its operation). Rows have no timestamp, so the cutoff is the
+   * first nonce the retained audit history shows inside the retention window: one signer's nonces
+   * rise with time. No retained audit row inside the window means no cutoff and no deletion.
+   */
+  private pruneFinalizedHistory(chainId: number, address: Hex, now: number, assertLease: () => void): void {
+    try {
+      const resolver = normalizeAddress(address), cutoff = new Date(now - this.auditRetentionMs).toISOString();
+      const first = this.database.query(`SELECT nonce FROM resolver_transaction_audit
+        WHERE chain_id=? AND resolver_address=? AND created_at >= ? ORDER BY sequence LIMIT 1`)
+        .get(chainId, resolver, cutoff) as { nonce: number } | null;
+      if (!first) return;
+      // NORMAL sync: a delete lost to power loss only comes back and is deleted again next pass.
+      withoutCommitSync(this.database, () => this.database.transaction(() => {
+        assertLease();
+        const nonces = (this.database.query(`SELECT i.nonce FROM resolver_prepared_intents i
+          WHERE i.chain_id=? AND i.resolver_address=? AND i.nonce < ? AND i.status = 'finalized'
+            AND i.nonce < (SELECT max(nonce) FROM resolver_prepared_intents
+              WHERE chain_id=i.chain_id AND resolver_address=i.resolver_address AND admission_proven=1)
+            AND NOT EXISTS (SELECT 1 FROM resolver_prepared_intents o WHERE o.chain_id=i.chain_id
+              AND o.resolver_address=i.resolver_address AND o.nonce=i.nonce AND o.status != 'finalized')
+            AND NOT EXISTS (SELECT 1 FROM resolver_nonce_recovery g WHERE g.chain_id=i.chain_id
+              AND g.resolver_address=i.resolver_address AND g.nonce=i.nonce)
+          ORDER BY i.nonce LIMIT ?`).all(chainId, resolver, first.nonce, finalizedPruneBatchNonces) as { nonce: number }[]).map((row) => row.nonce);
+        if (!nonces.length) return;
+        // prepare(), not query(): the IN list varies in length and query() caches every variant.
+        const list = "(" + nonces.map(() => "?").join(",") + ")";
+        this.database.prepare(`DELETE FROM resolver_signing_results WHERE reservation_id IN (SELECT id FROM resolver_signing_reservations
+          WHERE chain_id=? AND resolver_address=? AND transferred=1 AND nonce IN ${list})`).run(chainId, resolver, ...nonces);
+        this.database.prepare(`DELETE FROM resolver_signing_reservations WHERE chain_id=? AND resolver_address=? AND transferred=1 AND nonce IN ${list}`)
+          .run(chainId, resolver, ...nonces);
+        this.database.prepare(`DELETE FROM resolver_prepared_intents WHERE chain_id=? AND resolver_address=? AND status = 'finalized' AND nonce IN ${list}`)
+          .run(chainId, resolver, ...nonces);
+      }).immediate());
+    } catch (error) {
+      emitObservabilityEvent({ kind: "resolver_audit_prune_failed", chainId, address, stage: "finalized-history", reason: safeDiagnosticText(error) }, "warn");
+    }
+  }
+
 
   setRecoveryObserver(chainId: number, address: Hex, observer: RecoveryObserver): void {
     this.recoveryObservers.set(resolverKey(chainId, address), observer);
