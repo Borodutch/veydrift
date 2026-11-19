@@ -102,17 +102,34 @@ describe("crash diagnostics handlers", () => {
     expect(logged[0]?.detail.memory).toMatchObject({ rssMb: expect.any(Number) });
   });
 
-  test("records signals and exits zero", () => {
+  test("records signals and exits zero", async () => {
     const { logged, exits } = record();
     const handlers = buildDiagnosticsHandlers(
       (event, detail) => logged.push({ event, detail }),
-      (code) => exits.push(code)
+      (code) => exits.push(code),
+      []
     );
 
     handlers.onSignal("SIGTERM");
+    await Bun.sleep(0);
 
     expect(logged[0]?.event).toBe("signal");
     expect(logged[0]?.detail.signal).toBe("SIGTERM");
+    expect(exits).toEqual([0]);
+  });
+
+  test("exits only after shutdown hooks settle, once, even on a repeated signal (#753)", async () => {
+    const { exits } = record();
+    let finish!: () => void;
+    const hook = () => new Promise<void>((resolve) => { finish = resolve; });
+    const handlers = buildDiagnosticsHandlers(() => undefined, (code) => exits.push(code), [hook]);
+
+    handlers.onSignal("SIGTERM");
+    handlers.onSignal("SIGTERM");
+    await Bun.sleep(0);
+    expect(exits).toEqual([]);
+    finish();
+    await Bun.sleep(0);
     expect(exits).toEqual([0]);
   });
 });

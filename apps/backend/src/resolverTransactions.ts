@@ -149,6 +149,19 @@ type StoredAttempt = {
   updatedAt: string;
 };
 
+// Sends that hold (or are about to take) a resolver_send_fences row in this process. A process
+// that exits while one is in flight leaves a fence the next container can't prove dead (#753).
+const fencedSends = new Set<Promise<unknown>>();
+
+/** Resolves true once no send holds a fence in this process, false after `timeoutMs`. Exiting the
+ * moment it resolves true is safe: JS is single-threaded, so no new send can start in between. */
+export async function drainResolverSends(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (fencedSends.size && Date.now() < deadline)
+    await Promise.race([Promise.allSettled([...fencedSends]), Bun.sleep(deadline - Date.now())]);
+  return fencedSends.size === 0;
+}
+
 function sendOwnerHost(): string {
   return hostname() + (process.platform === "linux"
     ? ":" + readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim() + ":" + readlinkSync("/proc/self/ns/pid") : "");
@@ -1067,6 +1080,13 @@ export class ResolverTransactionCoordinator {
   }
 
   private async sendPrepared(chainId: number, address: Hex, intent: ReplayIntent,
+    assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<boolean> {
+    const send = this.sendPreparedFenced(chainId, address, intent, assertLease, broadcast, guard);
+    fencedSends.add(send);
+    try { return await send; } finally { fencedSends.delete(send); }
+  }
+
+  private async sendPreparedFenced(chainId: number, address: Hex, intent: ReplayIntent,
     assertLease: () => void, broadcast: () => Promise<Hex>, guard?: () => void): Promise<boolean> {
     const sendToken = randomUUID();
     // Keeps the FULL commit: it is the durability point of every journal write made since the

@@ -127,7 +127,10 @@ transport requires safe transport settlement or owner-process termination throug
 management, not a journal reset. Foreign-namespace orphan fences require independently verified
 old-owner termination and a separately reviewed recovery; no automatic TTL deletion or unsafe
 force-unlock command is supplied. Drain outstanding sends before rolling container replacement
-when possible; do not downgrade to a build that ignores these fences.
+when possible; do not downgrade to a build that ignores these fences. The backend does this itself
+on SIGTERM (#753): the writer exits only once no send holds a fence (at most 20 s), and the
+supervisor waits for its workers (at most 25 s), inside Tugport's 30 s stop grace. A send that
+hangs past that still leaves a foreign-namespace fence and needs the recovery above.
 
 Replay verifies the hash, recovered signer, chain and nonce against the immutable signing
 reservation, and calldata/target against mission membership and operation ID. It refreshes Base

@@ -50,14 +50,24 @@ export function defaultDiagnosticsLogger(event: string, detail: Record<string, u
 
 // Pure handler factory so the behavior can be unit-tested without registering real process listeners
 // or actually exiting the process.
+// Async work a signal must finish before exit (e.g. a resolver send whose fence would otherwise be
+// orphaned by a container replacement, #753). Each hook bounds its own wait; the orchestrator's
+// SIGKILL is the hard limit.
+const shutdownHooks: Array<() => Promise<unknown>> = [];
+export function onShutdown(hook: () => Promise<unknown>): void {
+  shutdownHooks.push(hook);
+}
+
 export function buildDiagnosticsHandlers(
   log: DiagnosticsLogger,
-  exit: (code: number) => void
+  exit: (code: number) => void,
+  hooks: ReadonlyArray<() => Promise<unknown>> = shutdownHooks
 ): {
   onUnhandledRejection: (reason: unknown) => void;
   onUncaughtException: (error: unknown) => void;
   onSignal: (signal: string) => void;
 } {
+  let draining = false;
   return {
     // Do NOT exit here: an unhandled rejection storm from transiently-failing live reads must not by
     // itself take the server down — it is exactly the noise the RPC timeout fix now bounds. Log it
@@ -84,7 +94,9 @@ export function buildDiagnosticsHandlers(
     // an uncatchable native SIGSEGV in the logs.
     onSignal: (signal) => {
       log("signal", { signal, memory: memorySnapshot() });
-      exit(0);
+      if (draining) return; // a repeated signal must not cut the drain short
+      draining = true;
+      void Promise.allSettled(hooks.map((hook) => hook())).then(() => exit(0));
     }
   };
 }

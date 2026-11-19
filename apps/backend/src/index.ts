@@ -1,4 +1,5 @@
-import { installCrashDiagnostics } from "./crashDiagnostics";
+import { installCrashDiagnostics, onShutdown } from "./crashDiagnostics";
+import { drainResolverSends } from "./resolverTransactions";
 import { loadBackendConfig } from "./config";
 import { healthSnapshotPath, healthSnapshotResponse, startHealthSnapshotPublisher } from "./healthSnapshot";
 import { createReaderBootstrapHandler, createRequestHandler, withRequestCors } from "./server";
@@ -24,6 +25,11 @@ import {
 // supervisor and every worker get their own crash diagnostics.
 installCrashDiagnostics();
 
+// Tugport stops a container with a 30 s SIGTERM→SIGKILL grace. The writer waits up to 20 s for an
+// in-flight resolver send to release its fence; the supervisor waits up to 25 s for its workers.
+const writerDrainMs = 20_000;
+const supervisorDrainMs = 25_000;
+
 const port = Number.parseInt(process.env.PORT ?? "4000", 10);
 const hostname = process.env.HOST ?? "0.0.0.0";
 const idleTimeout = Number.parseInt(process.env.VEYDRIFT_HTTP_IDLE_TIMEOUT_SECONDS ?? "30", 10);
@@ -41,6 +47,7 @@ function healthSnapshotFile(): string | null {
 // mutating request and the SSE stream there so the writer remains the sole mutator of the SQLite index
 // and the only holder of the live chain-sync stream.
 function serveWorker(role: WorkerRole, index: number, writerInternalPort?: number): void {
+  if (role === "writer") onShutdown(() => drainResolverSends(writerDrainMs));
   if (role === "writer" && writerInternalPort !== undefined) {
     const handler = createRequestHandler({ role, logRequests: false });
     const snapshotFile = healthSnapshotFile();
@@ -167,6 +174,14 @@ function superviseWorkers(workerCount: number): void {
   // exception into process.exit(1)); the "exit" event fires synchronously for all of those paths, so
   // killing the workers here covers every catchable shutdown. (SIGKILL is uncatchable; container
   // teardown reaps the workers in that case.)
+  // Forward SIGTERM and wait, so the writer can finish an in-flight send: the supervisor is the
+  // container's main process, and its exit kills every worker at once.
+  onShutdown(async () => {
+    shuttingDown = true;
+    const exits = [...children.values()].map((child) => { child.kill("SIGTERM"); return child.exited; });
+    await Promise.race([Promise.allSettled(exits), Bun.sleep(supervisorDrainMs)]);
+  });
+
   process.on("exit", () => {
     clearInterval(keepAlive);
     shuttingDown = true;

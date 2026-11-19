@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keccak256, parseTransaction, type Hex } from "viem";
 import { expireReconciliation, replayMissionFixture, replayItems } from "./resolverReplayTransport.fixture";
+import { drainResolverSends } from "./resolverTransactions";
 
 async function fixture(run: (path: string) => Promise<void>) {
   const dir = mkdtempSync(join(tmpdir(), "replay-transport-"));
@@ -146,5 +147,26 @@ test("foreign namespace orphan does not expire into an unproven concurrent resen
     clock.now += 1000000;
     await expect(replayMissionFixture(path, send, clock).resolveMissionBatch([])).rejects.toThrow("foreign-host orphan requires explicit recovery");
     expect(sends).toBe(3); expect(state(path).fences.length).toBe(1);
+  });
+});
+
+test("shutdown drain waits for an in-flight send to release its fence (#753)", async () => {
+  await fixture(async (path) => {
+    let release!: () => void, sent!: () => void, mined = false;
+    const started = new Promise<void>((resolve) => { sent = resolve; });
+    const send = (raw: Hex) => { sent(); return new Promise<Hex>((resolve) => { release = () => { mined = true; resolve(keccak256(raw)); }; }); };
+    const pass = replayMissionFixture(path, send, { now: 1000 }, () => mined).resolveMissionBatch(replayItems).catch(() => undefined);
+    await started;
+    expect(state(path).fences.length).toBe(1);
+    expect(await drainResolverSends(0)).toBe(false); // still fenced: a shutdown now would orphan it
+    let drained: boolean | undefined;
+    const drain = drainResolverSends(3_600_000).then((done) => { drained = done; });
+    await Bun.sleep(0);
+    expect(drained).toBeUndefined();
+    release();
+    await drain;
+    expect(drained).toBe(true);
+    expect(state(path).fences).toEqual([]);
+    await pass;
   });
 });
