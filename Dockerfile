@@ -3,9 +3,9 @@
 # chicken-burn-listener). The layer order is chosen for caching; read
 # docs/deployment.md#docker-builds before changing it.
 
-FROM oven/bun:1.4.4-debian@sha256:93d5032fe06d163427822dc1598f420363759bb18155c9cc90eb1be05a64a19e AS bun
+FROM oven/bun:1.4.5-debian@sha256:3dddea58e1f8f2240eca906b023fedb944f9a8352515a35309fd0c879fe00aaa AS bun
 
-# Node.js 22.23.5 (Nov 2026 security release), Bun 1.4.4, and fontconfig with the
+# Node.js 22.23.5 (Nov 2026 security release), Bun 1.4.5, and fontconfig with the
 # DejaVu fonts for the OG-card renderer (sharp). Cached until this block changes.
 FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
 RUN apt-get update \
