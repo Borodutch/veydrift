@@ -281,6 +281,9 @@ export class ResolverTransactionCoordinator {
     this.database.exec("PRAGMA journal_mode = WAL;");
     this.database.exec("PRAGMA synchronous = FULL;");
     this.database.exec("PRAGMA busy_timeout = 5000;");
+    // The WAL file counts toward the 240 MiB admission ceiling and never shrinks on its own: the
+    // PASSIVE checkpointer relies on this limit to trim it after a write burst (#754).
+    this.database.exec("PRAGMA journal_size_limit = 8388608;");
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS resolver_archive_progress (
         chain_id INTEGER NOT NULL, resolver_address TEXT NOT NULL, cursor_nonce INTEGER NOT NULL DEFAULT -1, last_confirmation_ms INTEGER,
