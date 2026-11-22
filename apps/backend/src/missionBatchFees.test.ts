@@ -295,6 +295,13 @@ test("replay never bypasses current Base fees, original budget, productivity or 
     replayRaw, input, replayPass)).rejects.toThrow("changed");
 });
 
+test("allowAlreadySettled accepts only AlreadySettled legs as a replay no-op (#801)", async () => {
+  await expect(validateMissionBatchReplay(fixture({ call: async () => result(2) }).client, replayRaw, input, replayPass)).rejects.toThrow("AlreadySettled");
+  (await validateMissionBatchReplay(fixture({ call: async () => result(2) }).client, replayRaw, input, replayPass, true))();
+  for (const outcome of [1, 3, 4, 5]) await expect(validateMissionBatchReplay(fixture({ call: async () => result(outcome) }).client,
+    replayRaw, input, replayPass, true)).rejects.toThrow();
+});
+
 test("every fee-age failure is typed for shared repacking, including oracle-await expiration", async () => {
   await expect(quoteMissionBatch(fixture({ getBlock: async () => block(now - 31n) }).client, input)).rejects.toBeInstanceOf(BatchQuoteExpiredError);
   const originalNow = Date.now;

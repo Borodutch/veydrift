@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { keccak256, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { BatchUnproductiveError } from "./missionBatch";
 import { ResolverTransactionCoordinator, type ResolverTransactionCoordinatorOptions, type ResolverTransactionRequest, type PreparedReplay } from "./resolverTransactions";
 
 const account = privateKeyToAccount(("0x" + "11".repeat(32)) as Hex); // fixture only
@@ -332,5 +333,82 @@ test.each(["ready", "attempt-recorded"])("restart after %s but before RPC replay
     f.send(async () => { f.mine(); });
     expect(await f.restart().submit(f.request)).toBe(hash);
     expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+  });
+});
+
+// #801: the envelope sat unmined (wallet dry) while every leg got settled elsewhere.
+const leg = (missionId: string) => ({ missionId, leg: "arrival" as const, dueAt: 0 });
+function settledElsewhere(f: ReturnType<typeof make>, reasons: string[], counts: { latest?: number; pending?: number } = {}) {
+  const flags: boolean[] = [];
+  f.replay.getTransactionCount = async (tag) => counts[tag] ?? nonce;
+  f.replay.validate = async (_raw, _op, _membership, _fee, _pass, allowAlreadySettled = false) => {
+    flags.push(allowAlreadySettled);
+    const rejected = reasons.map((reason, i) => ({ item: leg(String(99306 + i)), reason, terminal: true }))
+      .filter((x) => !(allowAlreadySettled && x.reason === "AlreadySettled"));
+    if (rejected.length) throw new BatchUnproductiveError(rejected);
+    return () => {};
+  };
+  return flags;
+}
+
+test("all-AlreadySettled unmined envelope is rebroadcast byte-identical once the node dropped it and the nonce is next", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await fixture(async (f) => {
+      await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
+      const flags = settledElsewhere(f, ["AlreadySettled", "AlreadySettled"]);
+      f.send(async () => { f.mine(); });
+      expect(await f.restart().submit(f.request)).toBe(hash);
+      expect(flags).toEqual([false, true]);
+      expect(f.counts()).toEqual({ signs: 1, sends: 4 });
+      expect(new Set(f.bytes)).toEqual(new Set([signed]));
+      expect(warn.mock.calls.some(([line]) => String(line).includes('"resolver_settled_intent_noop_replay"'))).toBe(true);
+    });
+  } finally { warn.mockRestore(); }
+});
+
+test.each([
+  ["a leg is still pending", ["AlreadySettled", "Pending"], {}, false, "99306:AlreadySettled, 99307:Pending"],
+  ["a leg is invalid", ["Invalid"], {}, false, "99306:Invalid"],
+  ["the node still knows the hash", ["AlreadySettled"], {}, true, "99306:AlreadySettled"],
+  ["another transaction is pending at the nonce", ["AlreadySettled"], { pending: nonce + 1 }, false, "99306:AlreadySettled"],
+  ["the nonce is already consumed", ["AlreadySettled"], { latest: nonce + 1, pending: nonce + 1 }, false, "99306:AlreadySettled"]
+] as const)("unproductive replay stays blocked with its real reason when %s", async (_label, reasons, counts, known, reason) => {
+  await fixture(async (f) => {
+    await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
+    const flags = settledElsewhere(f, [...reasons], counts);
+    if (known) f.replay.getTransaction = async () => ({ hash, blockHash: null });
+    const error = await f.restart().submit(f.request).catch((e) => e);
+    expect(error.message).toContain("preflight blocked (" + reason + ")");
+    expect(flags).toEqual([false]);
+    expect(f.counts()).toEqual({ signs: 1, sends: 3 });
+  });
+});
+
+test("a non-retryable intent never takes the settled no-op path", async () => {
+  await fixture(async (f) => {
+    await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
+    f.mutate("UPDATE resolver_prepared_intents SET replay_state = 'ready'");
+    const flags = settledElsewhere(f, ["AlreadySettled"]);
+    await expect(f.restart().submit(f.request)).rejects.toThrow("preflight blocked (99306:AlreadySettled)");
+    expect(flags).toEqual([false]);
+    expect(f.counts().sends).toBe(3);
+  });
+});
+
+test("the settled no-op path re-reads the hash and runs the full preflight again before sending", async () => {
+  await fixture(async (f) => {
+    await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
+    const flags = settledElsewhere(f, ["AlreadySettled"]);
+    let lookups = 0;
+    f.replay.getTransaction = async () => lookups++ ? { hash, blockHash: null } : null; // node learns it mid-pass
+    await expect(f.restart().submit(f.request)).rejects.toThrow("preflight blocked (99306:AlreadySettled)");
+    expect(flags).toEqual([false]);
+    f.advance(60000); lookups = 0;
+    f.replay.getTransaction = async () => null;
+    const validate = f.replay.validate;
+    f.replay.validate = async (...args) => { if (args[5]) throw new Error("fixed replay fee below current base fee; wait, never replace"); return validate(...args); };
+    await expect(f.restart().submit(f.request)).rejects.toThrow("preflight blocked (fixed replay fee below current base fee");
+    expect(f.counts()).toEqual({ signs: 1, sends: 3 });
   });
 });

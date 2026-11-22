@@ -1,4 +1,5 @@
 import { BatchQuoteExpiredError } from "./missionBatchFees";
+import { BatchUnproductiveError } from "./missionBatch";
 import { SupersessionUnavailableError } from "./resolverReplacementFees";
 import { classifyRecoveryReadError, RecoveryReadinessError, type RecoveryTrace } from "./recoveryReadiness";
 import { Database } from "bun:sqlite";
@@ -38,7 +39,9 @@ export type PreparedReplay = {
   getTransaction: (hash: Hex) => Promise<{ hash: Hex; blockHash: Hex | null } | null>;
   /** Signer nonce at a block tag; transport errors throw. Required to retire a locally prevented intent. */
   getTransactionCount?: (blockTag: "latest" | "pending") => Promise<number>;
-  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass) => Promise<PreparedReplayGuard>;
+  /** `allowAlreadySettled` accepts AlreadySettled legs as a no-op (#801); every other check still applies. */
+  validate: (raw: Hex, operationId: string, membership: string, originalMaxFeeWei: string | null, pass: PreparedReconciliationPass,
+    allowAlreadySettled?: boolean) => Promise<PreparedReplayGuard>;
   broadcast: (raw: Hex) => Promise<Hex>;
   /**
    * Plan the single same-nonce alternative for an accepted envelope that is never included (#397):
@@ -1262,9 +1265,37 @@ export class ResolverTransactionCoordinator {
       await this.sleep(intent.nextRetry - this.now());
       assertLease();
     }
+    const preflight = (allowAlreadySettled = false) => pass.read(() =>
+      replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass, allowAlreadySettled));
+    const blocked = (error: unknown) => {
+      pass.assertActive();
+      if (error instanceof RecoveryReadinessError || error instanceof BatchQuoteExpiredError) return error;
+      return this.replayError(intent, "fixed-envelope fee/intent preflight blocked (" + safeDiagnosticText(error, 300)
+        + "); retry when prerequisites recover");
+    };
     let guard: PreparedReplayGuard;
-    try { guard = await pass.read(() => replay.validate(intent.raw!, intent.operationId, intent.membership, intent.originalMaxFeeWei, pass)); }
-    catch(error) { pass.assertActive(); if(error instanceof RecoveryReadinessError || error instanceof BatchQuoteExpiredError)throw error; throw this.replayError(intent, "fixed-envelope fee/intent preflight blocked; retry when prerequisites recover"); }
+    try { guard = await preflight(); }
+    catch (error) {
+      // #801: every unproductive leg was settled by someone else while this envelope sat unmined (e.g.
+      // the wallet ran dry). Those legs are now a cheap on-chain no-op (any others still settle), and
+      // nothing else can use this nonce without a re-sign, so the replay deadlocks. When the node has
+      // dropped the hash and the nonce is exactly next, broadcast the identical bytes to consume it.
+      // Never re-sign or fee-bump.
+      if (!(error instanceof BatchUnproductiveError) || !error.rejected.length
+        || !error.rejected.every((x) => x.reason === "AlreadySettled")
+        || recovery || intent.supersedes || intent.replayState !== "retryable" || transaction || !replay.getTransactionCount) throw blocked(error);
+      assertLease();
+      if (await pass.read(() => replay.getTransaction(intent.hash))) throw blocked(error);
+      const latest = await pass.read(() => replay.getTransactionCount!("latest"));
+      const pending = await pass.read(() => replay.getTransactionCount!("pending"));
+      if (latest !== intent.nonce || pending !== intent.nonce) throw blocked(error);
+      try { guard = await preflight(true); } catch (retry) { throw blocked(retry); }
+      // Repeats every retry while e.g. the wallet is still empty: warn once, then at most hourly.
+      if (this.shouldWarnSupersession(chainId, address, intent.hash, "settled-noop"))
+        emitObservabilityEvent({ kind: "resolver_settled_intent_noop_replay", chainId, address, nonce: intent.nonce,
+          transactionHash: intent.hash, attempts: intent.attempts, reason: safeDiagnosticText(error, 300),
+          action: "unproductive legs already settled elsewhere; rebroadcasting the identical signed bytes (a no-op for those legs) to free the nonce" }, "warn");
+    }
     assertLease();
     const group = this.recoveryGroups(chainId,address).find((g) => g.alternative_hash===intent.hash);
     if (group) {

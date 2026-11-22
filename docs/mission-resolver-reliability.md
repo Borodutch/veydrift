@@ -110,3 +110,14 @@ The candidate whose canonical receipt proves the consumed nonce (or is finalized
 A reorg that drops the winner and mines the retired candidate fails the frontier check closed. The retired row is then excluded from automatic reconciliation, and an operator must repair it. Audit rows `superseding`, `superseding-candidate` and `superseded` record the lineage, together with the events `resolver_same_nonce_supersession` and `resolver_same_nonce_candidate_retired`.
 
 **Rollback.** An older binary does not understand `supersedes` or `superseded`. It treats a `superseded` row as unresolved and blocks admission permanently once any supersession has happened, not only while a pair is unresolved. Roll forward; never downgrade past this release.
+
+## Never mined and settled elsewhere: identical-byte no-op (#801)
+
+An envelope can sit unmined (for example while the resolver wallet is empty) until every one of its legs has been settled by another transaction. The replay preflight then simulates `AlreadySettled` for each leg, and since a re-sign is never allowed, nothing else can ever use that nonce: every later batch waits behind it. The coordinator therefore rebroadcasts the identical signed bytes, which the chain executes as a cheap no-op that consumes the nonce, but only when all of these hold:
+
+- every leg the simulation rejects is `AlreadySettled` (legs that still settle are fine; a `Pending`, `Invalid` or other outcome keeps the block),
+- the intent is an ordinary `retryable` original: not a recovery, not a same-nonce alternative,
+- the node does not know the hash, and the signer's `latest` and `pending` nonces both equal the intent's nonce,
+- a second preflight that accepts `AlreadySettled` legs passes every other check (envelope binding, fixed fees under the current base fee, ETH caps, canonical block).
+
+It emits `resolver_settled_intent_noop_replay` (once, then at most hourly per envelope, since an empty wallet makes every retry fail the same way) and goes through the normal fenced send. Gas, fees and calldata never change. Any other preflight failure is logged with its reason, as `fixed-envelope fee/intent preflight blocked (<reason>)`.

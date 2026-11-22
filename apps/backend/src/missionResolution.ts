@@ -971,7 +971,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
           try { return await this.publicClient!.getTransactionCount({ address, blockTag }); }
           catch { throw new RecoveryReadinessError("rpc-unavailable"); }
         },
-        validate: async (raw, operationId, membership, originalMaxFeeWei, pass) => {
+        validate: async (raw, operationId, membership, originalMaxFeeWei, pass, allowAlreadySettled = false) => {
           if(pass.recoveryTrace)pass.recoveryTrace.stage="pause";
           if (!this.batchPolicy.enabled || await pass.read(() => this.gamePaused())) throw new RecoveryReadinessError("paused");
           const items: BatchLeg[] = JSON.parse(membership);
@@ -995,7 +995,7 @@ export class ViemMissionResolutionChainClient implements MissionResolutionChainC
 
           }
           const feeGuard = await validateMissionBatchReplay(this.publicClient!, raw, { items, account: address,
-            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei }, ...(identity ? {blockNumber:identity.number!} : {}) }, pass, allowRecoveryNoop,
+            game: this.gameAddress, chainId: this.chain!.id, policy: { ...this.batchPolicy, maxFeeWei }, ...(identity ? {blockNumber:identity.number!} : {}) }, pass, allowRecoveryNoop || allowAlreadySettled,
             recovery ? (evidence) => this.transactionCoordinator.recordRecoveryQuote(recovery,evidence,pass.assertActive) : undefined);
           return recovery && identity ? recoveryProofGuard(this.publicClient!,JSON.parse(recovery.evidence),identity,pass,feeGuard,pass.recoveryTrace) : feeGuard;
         },
