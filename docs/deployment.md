@@ -116,7 +116,8 @@ below). The layout keeps a code-only deploy to the code layers:
 
 - **Base (cached):** pinned Node.js 22.23.5 image, Bun 1.4.5 copied from the
   official Bun image, and `fontconfig` with the DejaVu fonts for the OG-card
-  renderer (sharp). Bump runtimes by changing the pinned tags and digests.
+  renderer (sharp). The bundled npm is deleted (nothing runs it, and its
+  dependencies carry CVEs). Bump runtimes by changing the pinned tags and digests.
 - **Dependencies (cached until the lockfile or a workspace `package.json`
   changes):** one frozen `bun install` with dev dependencies for every workspace,
   with the Bun package cache in a cache mount. `scripts/dockerfile.test.mjs`

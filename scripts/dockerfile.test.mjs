@@ -46,3 +46,7 @@ test("sitemap.xml lists exactly the pages the image prerenders", () => {
   const locs = [...sitemap.matchAll(/<loc>https:\/\/veydrift\.com([^<]*)<\/loc>/g)].map((m) => m[1] || "/");
   assert.deepEqual(locs.sort(), routes.sort());
 });
+
+test("the base image drops the bundled npm", () => {
+  assert.ok(stages.base.includes("/usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx"));
+});

@@ -8,9 +8,12 @@ FROM oven/bun:1.4.5-debian@sha256:3dddea58e1f8f2240eca906b023fedb944f9a8352515a3
 # Node.js 22.23.5 (Nov 2026 security release), Bun 1.4.5, and fontconfig with the
 # DejaVu fonts for the OG-card renderer (sharp). Cached until this block changes.
 FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS base
+# The image's bundled npm is dropped: every stage installs and runs with Bun or plain
+# node, and npm's own dependencies carry CVEs no Node 22 release fixes.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates fontconfig fonts-dejavu-core \
-  && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/* \
+    /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 RUN ln -s bun /usr/local/bin/bunx
 ENV NODE_ENV=production PATH=/app/node_modules/.bin:$PATH
