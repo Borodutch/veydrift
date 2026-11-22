@@ -72,4 +72,16 @@ describe("ChickenBurnProcessor", () => {
     await reloaded.load();
     expect(reloaded.hasProcessed(event.burnId)).toBe(true);
   });
+
+  test("overlapping live and backfill deliveries send one grant", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "chicken-burn-listener-"));
+    const store = new JsonStateStore(join(tempDir, "state.json"));
+    await store.load();
+    const grants = new MockGrantClient();
+    const processor = new ChickenBurnProcessor(store, grants, { info: () => {}, warn: () => {}, error: () => {} });
+
+    await Promise.all([processor.processBurn(event), processor.processBurn(event)]);
+
+    expect(grants.calls).toBe(1);
+  });
 });

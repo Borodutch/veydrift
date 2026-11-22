@@ -48,7 +48,19 @@ export class ChickenBurnProcessor {
     };
   }
 
-  async processBurn(event: ChickenBurnEvent): Promise<void> {
+  // Live logs, startup and periodic backfills overlap; one grant per burn at a time, or the
+  // second send reverts ChickenBurnAlreadyGranted and crashes the listener.
+  private readonly inFlight = new Map<string, Promise<void>>();
+
+  processBurn(event: ChickenBurnEvent): Promise<void> {
+    const pending = this.inFlight.get(event.burnId);
+    if (pending) return pending;
+    const run = this.grantOnce(event).finally(() => this.inFlight.delete(event.burnId));
+    this.inFlight.set(event.burnId, run);
+    return run;
+  }
+
+  private async grantOnce(event: ChickenBurnEvent): Promise<void> {
     if (this.store.hasProcessed(event.burnId)) {
       this.duplicateCount += 1;
       return;
