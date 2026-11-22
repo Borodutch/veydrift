@@ -111,13 +111,15 @@ A reorg that drops the winner and mines the retired candidate fails the frontier
 
 **Rollback.** An older binary does not understand `supersedes` or `superseded`. It treats a `superseded` row as unresolved and blocks admission permanently once any supersession has happened, not only while a pair is unresolved. Roll forward; never downgrade past this release.
 
-## Never mined and settled elsewhere: identical-byte no-op (#801)
+## Never mined and settled elsewhere: identical-byte no-op (#801, #805)
 
 An envelope can sit unmined (for example while the resolver wallet is empty) until every one of its legs has been settled by another transaction. The replay preflight then simulates `AlreadySettled` for each leg, and since a re-sign is never allowed, nothing else can ever use that nonce: every later batch waits behind it. The coordinator therefore rebroadcasts the identical signed bytes, which the chain executes as a cheap no-op that consumes the nonce, but only when all of these hold:
 
 - every leg the simulation rejects is `AlreadySettled` (legs that still settle are fine; a `Pending`, `Invalid` or other outcome keeps the block),
-- the intent is an ordinary `retryable` original: not a recovery, not a same-nonce alternative,
+- the intent completed its first-send validation: `retryable` (sent at least once), or `ready` (validated, but the process stopped before the first send) (#805). It is not a recovery,
 - the node does not know the hash, and the signer's `latest` and `pending` nonces both equal the intent's nonce,
 - a second preflight that accepts `AlreadySettled` legs passes every other check (envelope binding, fixed fees under the current base fee, ETH caps, canonical block).
 
-It emits `resolver_settled_intent_noop_replay` (once, then at most hourly per envelope, since an empty wallet makes every retry fail the same way) and goes through the normal fenced send. Gas, fees and calldata never change. Any other preflight failure is logged with its reason, as `fixed-envelope fee/intent preflight blocked (<reason>)`.
+This applies to a same-nonce alternative (#397) as well as to an original (#805). If both candidates sit unmined while the legs get settled elsewhere, the original is never resent, so the alternative is the only way to free the nonce. For an alternative the node must also not know the original's hash. Once the alternative is mined, it wins the pair and the original becomes `superseded` as usual. An alternative still `unvalidated` (its first validation already saw settled legs, so it was never sent) stays blocked and needs operator review, since nothing ever proved its envelope productive.
+
+After the send, it emits `resolver_settled_intent_noop_replay` with `accepted` (whether the node took the bytes) and the resulting `replayState` (`retryable` retries; a deterministic rejection needs operator review). It warns once per envelope and outcome, then at most hourly, since an empty wallet makes every retry fail the same way, and it goes through the normal fenced send. Gas, fees and calldata never change. Any other preflight failure is logged with its reason, as `fixed-envelope fee/intent preflight blocked (<reason>)`.

@@ -385,12 +385,52 @@ test.each([
   });
 });
 
-test("a non-retryable intent never takes the settled no-op path", async () => {
+test("a ready original (crash before its first send) whose legs were all settled elsewhere is broadcast byte-identical (#805)", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await fixture(async (f) => {
+      let guards = 0;
+      const request = { ...f.request, prepare: async (n: number, signing: Parameters<NonNullable<ResolverTransactionRequest["prepare"]>>[1]) => ({
+        ...await f.request.prepare!(n, signing), assertBeforeBroadcast: () => { if (++guards === 3) throw new Error("process stopped at send boundary"); }
+      }) };
+      await expect(f.coordinator.submit(request)).rejects.toThrow("process stopped");
+      expect(f.rows()).toMatchObject({ attempts: 0, state: "ready" });
+      const flags = settledElsewhere(f, ["AlreadySettled"]);
+      f.send(async () => { f.mine(); });
+      expect(await f.restart().submit(f.request)).toBe(hash);
+      expect(flags).toEqual([false, true]);
+      expect(f.counts()).toEqual({ signs: 1, sends: 1 });
+      expect(warn.mock.calls.some(([line]) => String(line).includes('"resolver_settled_intent_noop_replay"') && String(line).includes('"accepted":true'))).toBe(true);
+    });
+  } finally { warn.mockRestore(); }
+});
+
+test("the settled no-op warning is logged after the send, with its outcome", async () => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await fixture(async (f) => {
+      await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
+      settledElsewhere(f, ["AlreadySettled"]);
+      const events = () => warn.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('"resolver_settled_intent_noop_replay"'));
+      f.send(async () => { expect(events()).toHaveLength(0); throw new Error("insufficient funds for gas * price + value " + signed); });
+      await expect(f.restart().submit(f.request)).rejects.toThrow();
+      expect(events()).toHaveLength(1);
+      expect(events()[0]).toContain('"accepted":false');
+      expect(events()[0]).toContain("it retries with the same gates");
+    });
+  } finally { warn.mockRestore(); }
+});
+
+test("a recovery intent never takes the settled no-op path", async () => {
   await fixture(async (f) => {
     await expect(f.coordinator.submit(f.request)).rejects.toThrow("cooling down"); f.advance(60000);
-    f.mutate("UPDATE resolver_prepared_intents SET replay_state = 'ready'");
+    const binding = { chainId, address: account.address.toLowerCase(), nonce, originalHash: "0x" + "ab".repeat(32), operationId: "batch:fixture",
+      membership, to: account.address, data: "0x12345678", value: "0", evidence: "{}" };
+    f.mutate(`INSERT INTO resolver_nonce_recovery (chain_id,resolver_address,nonce,binding,original_hash,alternative_hash,max_fee_wei) VALUES (${chainId},'${account.address.toLowerCase()}',${nonce},'${JSON.stringify(binding)}','${binding.originalHash}','${hash}','1')`);
     const flags = settledElsewhere(f, ["AlreadySettled"]);
-    await expect(f.restart().submit(f.request)).rejects.toThrow("preflight blocked (99306:AlreadySettled)");
+    const c = f.restart();
+    c.setRecoveryObserver(chainId, account.address, { verifyFinalized: async () => {}, observe: async () => null, invalidate: () => {}, assertUnconsumed: async () => {} });
+    await expect(c.submit(f.request)).rejects.toThrow("preflight blocked (99306:AlreadySettled)");
     expect(flags).toEqual([false]);
     expect(f.counts().sends).toBe(3);
   });

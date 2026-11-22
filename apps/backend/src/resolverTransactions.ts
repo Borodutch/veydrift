@@ -1274,27 +1274,27 @@ export class ResolverTransactionCoordinator {
         + "); retry when prerequisites recover");
     };
     let guard: PreparedReplayGuard;
+    let settledNoop: string | undefined;
     try { guard = await preflight(); }
     catch (error) {
       // #801: every unproductive leg was settled by someone else while this envelope sat unmined (e.g.
       // the wallet ran dry). Those legs are now a cheap on-chain no-op (any others still settle), and
       // nothing else can use this nonce without a re-sign, so the replay deadlocks. When the node has
       // dropped the hash and the nonce is exactly next, broadcast the identical bytes to consume it.
-      // Never re-sign or fee-bump.
+      // Never re-sign or fee-bump. Applies to a validated original or same-nonce alternative (#805:
+      // `retryable`, or `ready` after a crash before its first send); an `unvalidated` alternative and
+      // any recovery stay blocked. An alternative also needs the node to have dropped its original.
       if (!(error instanceof BatchUnproductiveError) || !error.rejected.length
         || !error.rejected.every((x) => x.reason === "AlreadySettled")
-        || recovery || intent.supersedes || intent.replayState !== "retryable" || transaction || !replay.getTransactionCount) throw blocked(error);
+        || recovery || (intent.replayState !== "retryable" && intent.replayState !== "ready") || transaction || !replay.getTransactionCount) throw blocked(error);
       assertLease();
-      if (await pass.read(() => replay.getTransaction(intent.hash))) throw blocked(error);
+      if (await pass.read(() => replay.getTransaction(intent.hash)) !== null) throw blocked(error);
+      if (intent.supersedes && await pass.read(() => replay.getTransaction(intent.supersedes!)) !== null) throw blocked(error);
       const latest = await pass.read(() => replay.getTransactionCount!("latest"));
       const pending = await pass.read(() => replay.getTransactionCount!("pending"));
       if (latest !== intent.nonce || pending !== intent.nonce) throw blocked(error);
       try { guard = await preflight(true); } catch (retry) { throw blocked(retry); }
-      // Repeats every retry while e.g. the wallet is still empty: warn once, then at most hourly.
-      if (this.shouldWarnSupersession(chainId, address, intent.hash, "settled-noop"))
-        emitObservabilityEvent({ kind: "resolver_settled_intent_noop_replay", chainId, address, nonce: intent.nonce,
-          transactionHash: intent.hash, attempts: intent.attempts, reason: safeDiagnosticText(error, 300),
-          action: "unproductive legs already settled elsewhere; rebroadcasting the identical signed bytes (a no-op for those legs) to free the nonce" }, "warn");
+      settledNoop = safeDiagnosticText(error, 300);
     }
     assertLease();
     const group = this.recoveryGroups(chainId,address).find((g) => g.alternative_hash===intent.hash);
@@ -1319,7 +1319,17 @@ export class ResolverTransactionCoordinator {
       intent.replayState="ready";
     }
     if(pass.recoveryTrace)pass.recoveryTrace.stage="dispatch";
-    await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
+    const accepted = await this.sendPrepared(chainId, address, intent, assertLease, () => replay.broadcast(intent.raw!), guard);
+    // Logged after the send, with its outcome. Repeats every retry while e.g. the wallet is still
+    // empty: warn once per outcome, then at most hourly.
+    if (settledNoop !== undefined && this.shouldWarnSupersession(chainId, address, intent.hash, "settled-noop:" + accepted + ":" + intent.replayState))
+      emitObservabilityEvent({ kind: "resolver_settled_intent_noop_replay", chainId, address, nonce: intent.nonce,
+        transactionHash: intent.hash, supersedes: intent.supersedes ?? null, attempts: intent.attempts, accepted, replayState: intent.replayState, reason: settledNoop,
+        action: accepted
+          ? "unproductive legs already settled elsewhere; rebroadcast the identical signed bytes (a no-op for those legs) to free the nonce; the node accepted them"
+          : intent.replayState === "retryable"
+            ? "unproductive legs already settled elsewhere; the identical-byte no-op rebroadcast was not accepted (check the resolver wallet balance and RPC); it retries with the same gates"
+            : "unproductive legs already settled elsewhere; the identical-byte no-op rebroadcast was rejected deterministically; operator review required (see docs/mission-resolver-reliability.md)" }, "warn");
   }
 
   /** True the first time an envelope hits a repeating supersession warning reason, and then at most

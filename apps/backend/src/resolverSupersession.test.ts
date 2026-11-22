@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { keccak256, parseTransaction, serializeTransaction, type Hex } from "vie
 import { privateKeyToAccount } from "viem/accounts";
 import { ResolverTransactionCoordinator, type PreparedReplay, type ResolverTransactionRequest } from "./resolverTransactions";
 import { SupersessionUnavailableError } from "./resolverReplacementFees";
+import { BatchUnproductiveError } from "./missionBatch";
 
 // #397: an accepted batch that Base holds ("already known") but never includes.
 const account = privateKeyToAccount(("0x" + "11".repeat(32)) as Hex); // fixture only
@@ -330,5 +331,89 @@ test("supersession planning has its own bounded budget: a slow planner falls bac
     f.advance(60_000);
     await expect(f.pass()).rejects.toThrow("same-nonce alternative dispatched");
     expect(f.counts().signs).toBe(1);
+  });
+});
+
+// #805: both candidates sat unmined (wallet dry) while every leg got settled elsewhere.
+function settledElsewhere(f: ReturnType<typeof make>, reasons: string[] = ["AlreadySettled"]) {
+  const flags: boolean[] = [];
+  f.replay.validate = async (_raw, _op, _membership, _fee, _pass, allowAlreadySettled = false) => {
+    flags.push(allowAlreadySettled);
+    const rejected = reasons.map((reason, i) => ({ item: { missionId: String(109746 + i), leg: "arrival" as const, dueAt: 0 }, reason, terminal: true }))
+      .filter((x) => !(allowAlreadySettled && x.reason === "AlreadySettled"));
+    if (rejected.length) throw new BatchUnproductiveError(rejected);
+    return () => {};
+  };
+  return flags;
+}
+
+async function alternativeDispatched(f: ReturnType<typeof make>) {
+  await stuck(f);
+  f.advance(60_000);
+  await expect(f.pass()).rejects.toThrow("same-nonce alternative dispatched");
+  f.advance(60_000);
+  return f.sent.length;
+}
+
+test.each(["retryable", "ready"])("an all-AlreadySettled %s same-nonce alternative is rebroadcast byte-identical; the original is never resent (#805)", async (state) => {
+  const warn = spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await withJournal(async (path) => {
+      const f = make(path);
+      const before = await alternativeDispatched(f);
+      // ready: validated, but the process stopped before its first send.
+      if (state === "ready") f.query(`UPDATE resolver_prepared_intents SET replay_state='ready', send_attempts=0, next_retry_ms=0 WHERE supersedes IS NOT NULL`);
+      const flags = settledElsewhere(f);
+      const lookups: Hex[] = [];
+      f.replay.getTransaction = async (hash) => { lookups.push(hash); return null; };
+      const broadcast = f.replay.broadcast;
+      f.replay.broadcast = async (raw) => { if (raw === alternative) f.mined.add(alternativeHash); return broadcast(raw); };
+      await f.pass().catch(() => {});
+      expect(flags).toEqual([false, true]);
+      expect(lookups).toContain(originalHash);
+      expect(f.sent.slice(before)).toEqual([alternative]);
+      expect(f.counts()).toEqual({ signs: 1, plans: 1 });
+      await f.pass();
+      expect(f.intents()).toMatchObject([{ hash: originalHash, status: "superseded", attempts: 6 }, { hash: alternativeHash, status: "finalized" }]);
+      expect(f.coordinator.admissionSnapshot(chainId, account.address)).toMatchObject({ active: 0, blockedReason: null });
+      const events = warn.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('"resolver_settled_intent_noop_replay"'));
+      expect(events).toHaveLength(1);
+      expect(JSON.parse(events[0]!.slice(events[0]!.indexOf("{")))).toMatchObject({ transactionHash: alternativeHash, supersedes: originalHash, accepted: true });
+    });
+  } finally { warn.mockRestore(); }
+});
+
+test.each([
+  ["the node still knows the original", ["AlreadySettled"], { known: originalHash }],
+  ["the node still knows the alternative", ["AlreadySettled"], { known: alternativeHash }],
+  ["a leg is still pending", ["AlreadySettled", "Pending"], {}],
+  ["another transaction is pending at the nonce", ["AlreadySettled"], { pending: nonce + 1 }]
+] as const)("a settled alternative stays blocked when %s (#805)", async (_label, reasons, options: { known?: Hex; pending?: number }) => {
+  await withJournal(async (path) => {
+    const f = make(path);
+    const before = await alternativeDispatched(f);
+    const flags = settledElsewhere(f, [...reasons]);
+    f.replay.getTransaction = async (hash) => hash === options.known ? { hash, blockHash: null } : null;
+    f.replay.getTransactionCount = async (tag) => tag === "pending" ? options.pending ?? nonce : nonce;
+    await expect(f.pass()).rejects.toThrow("preflight blocked (109746:AlreadySettled");
+    expect(flags).toEqual([false]);
+    expect(f.sent.length).toBe(before);
+    expect(f.intents()).toMatchObject([{ status: "pending", attempts: 6 }, { status: "pending", attempts: 1 }]);
+  });
+});
+
+test("an alternative whose first validation already sees settled legs stays unvalidated and blocked (#805)", async () => {
+  await withJournal(async (path) => {
+    const f = make(path);
+    await stuck(f);
+    const flags = settledElsewhere(f);
+    const before = f.sent.length;
+    for (let i = 0; i < 2; i++) {
+      f.advance(60_000);
+      await expect(f.restart() && f.pass()).rejects.toThrow("preflight blocked (109746:AlreadySettled)");
+    }
+    expect(flags).toEqual([false, false]);
+    expect(f.sent.length).toBe(before);
+    expect(f.intents()).toMatchObject([{ hash: originalHash, attempts: 6 }, { hash: alternativeHash, attempts: 0, state: "unvalidated" }]);
   });
 });
