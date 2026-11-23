@@ -1005,7 +1005,8 @@ describe("MissionResolutionService", () => {
   // #858: players resolve legs; the server only reports them.
   test("manual mode sends no leg transactions and does not treat a due backlog as a fault", async () => {
     let sent = 0;
-    const service = new MissionResolutionService({ ...config, manualMissionResolution: true }, {
+    let reconciled = 0;
+    const service = new MissionResolutionService({ ...config, manualMissionResolution: true, missionBatch: { enabled: true, maxItems: 16, maxFeeWei: 200_000_000_000_000n } }, {
       candidateSource: {
         missionResolutionCandidates: () => ({
           arrivals: [arrival("1", "Deploy", "900")],
@@ -1018,7 +1019,12 @@ describe("MissionResolutionService", () => {
         async listReturnableFleetMissions() { return []; },
         async resolveFleetMission() { sent += 1; return "0xarrival"; },
         async completeFleetMissionReturn() { sent += 1; return "0xreturn"; },
-        async resolveMissionBatch() { sent += 1; throw new Error("no batches in manual mode"); }
+        async resolveMissionBatch(items: unknown[]) {
+          // An empty pass only reconciles the journal; any leg here would be a paid send.
+          if (items.length) sent += 1;
+          reconciled += 1;
+          return { hash: null, items: [], exclusions: [] };
+        }
       } as never,
       logger: silentLogger(),
       now: () => 10_000_000,
@@ -1028,6 +1034,7 @@ describe("MissionResolutionService", () => {
     await service.tick();
 
     expect(sent).toBe(0);
+    expect(reconciled).toBe(1);
     expect(service.snapshot()).toMatchObject({
       manualLegResolution: true,
       healthStatus: "healthy",

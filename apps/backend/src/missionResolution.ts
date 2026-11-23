@@ -465,9 +465,10 @@ export class MissionResolutionService {
         this.lastError = null;
         return;
       }
-      // #858: in manual mode players pay for legs; due legs are still scanned and reported.
+      // #858: in manual mode players pay for legs; due legs are still scanned and reported. An empty
+      // pass still reconciles the shared signer journal (no send), so admission health stays live.
       const results = await Promise.allSettled([
-        this.config.manualMissionResolution ? Promise.resolve() : this.settleCandidates(settlementCandidates),
+        this.settleCandidates(this.config.manualMissionResolution ? [] : settlementCandidates),
         this.settleMoonChances()
       ]);
       // Keep the overlap guard until both lanes finish, even if an indexed read fails in one.
