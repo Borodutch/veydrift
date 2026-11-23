@@ -120,12 +120,14 @@ energy scale = produced / required
     expect(links.some((node) => node.props?.href === "/docs" && node.props?.children === "Docs")).toBe(false);
   });
 
-  test("player guidance matches automatic completion without settlement duties", () => {
+  // #858: players resolve their own due missions; the docs say so and who pays.
+  test("player guidance explains resolving missions", () => {
     const markdown = readFileSync(new URL("../src/docs/content/docs.md", import.meta.url), "utf8");
-    expect(markdown).toContain("Mission arrivals and returns update automatically.");
-    expect(markdown).toContain("the outcome is not known yet");
+    expect(markdown).toContain("Mission Control shows **Resolve**");
+    expect(markdown).toContain("you pay the network gas");
+    expect(markdown).toContain("resolve again");
     expect(markdown).toContain("queues show the work remaining");
-    expect(markdown).not.toMatch(/\*\*Resolve\*\*|Awaiting randomness|funded resolver|lazily settled|collected explicitly|60 seconds/);
+    expect(markdown).not.toMatch(/Mission arrivals and returns update automatically|no completion transaction is needed|Awaiting randomness|funded resolver|collected explicitly|60 seconds/);
     expect(markdown).toContain("settlement flow to claim a home planet");
   });
 

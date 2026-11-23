@@ -36,7 +36,7 @@ import { AnimatedProgressBar } from "./components/AnimatedProgressBar";
 import { BatchSupplyModal } from "./components/BatchSupplyModal";
 import { GalaxyView, type GalaxyActionState } from "./components/GalaxyView";
 import { emptyMissionCargoDraft, normalizeMissionCargoDraft, type MissionCargoDraft } from "./components/missionCargoModel";
-import { EMPTY_MISSION_CONTROL_FILTERS, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, normalizeMissionControlFilters, persistMissionControlView, resolveMissionControlView, type MissionControlFilters, type MissionControlView } from "./components/missionControlModel";
+import { EMPTY_MISSION_CONTROL_FILTERS, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, normalizeMissionControlFilters, persistMissionControlView, resolveMissionControlView, type DueMissionResolutionItem, type MissionControlFilters, type MissionControlView } from "./components/missionControlModel";
 import { type CombatTechLevels, type JoinAttackForecastContext, type MissionLaunchDraft } from "./components/MissionCreationPage";
 import { NavBar, type Page } from "./components/NavBar";
 import { type OverviewMyPlanetActionGroup, type PlanetRenameActionState } from "./components/OverviewPage";
@@ -186,6 +186,7 @@ import {
   sendLaunchDeployBatchTransaction,
   sendLaunchBodySupplyBatchTransaction,
   sendRecallFleetMissionTransaction,
+  sendResolveFleetMissionBatchTransaction,
   sendRenamePlanetTransaction,
   fetchMission,
   sendAcceptDelegateTransaction,
@@ -6370,6 +6371,24 @@ export function PlayableMvpApp({
     [account, displayFleetVisibility, gameContract, provider, runMissionTransaction, signerAccount],
   );
 
+  // #858: players resolve due legs themselves (one batch transaction); the server no longer does.
+  const handleResolveMissions = useCallback(
+    (items: DueMissionResolutionItem[]) => {
+      if (!provider || !signerAccount || !account || !gameContract) {
+        setMissionAction({
+          status: "error",
+          label: "Wallet or game connection is unavailable.",
+        });
+        return;
+      }
+      runMissionTransaction(
+        items.length === 1 ? `Resolve mission #${items[0]!.missionId}` : `Resolve ${items.length} missions`,
+        (provider: Eip1193Provider) => sendResolveFleetMissionBatchTransaction(provider, signerAccount, gameContract, items),
+      );
+    },
+    [account, gameContract, provider, runMissionTransaction, signerAccount],
+  );
+
   // VEY-KANEO-440: ACS Defend ("Defend planet") opens the full compose picker (fleet + speed +
   // hold/holding-fuel + Alliance Depot preview) instead of firing a default fleet. Intercept was
   // removed from the frontend (VEY-KANEO-439), so this is the only remaining counterplay path.
@@ -7000,6 +7019,7 @@ export function PlayableMvpApp({
           onShareReport={() => handleShareMissionReport(missionDetailShareUrl)}
           onCounterplay={handleMissionCounterplay}
           onRecall={handleRecallMission}
+          onResolveMissions={handleResolveMissions}
           onRetry={loadMissionDetail}
           onSelectCoordinates={handleSelectPlanet}
           onSelectMoon={handleSelectMoon}
@@ -7359,6 +7379,7 @@ export function PlayableMvpApp({
           onOpenReport={handleOpenMissionReport}
           onOpenReportList={handleOpenMissionReportList}
           onRecall={handleRecallMission}
+          onResolveMissions={handleResolveMissions}
           onGlobalMissionArchivePageChange={(page) => void loadGlobalMissionArchive(page)}
           onIncomingAttackArchivePageChange={(page) => void loadIncomingAttackArchive(page)}
           onMissionArchivePageChange={(page) => void loadMissionArchive(page)}

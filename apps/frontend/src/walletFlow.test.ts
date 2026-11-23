@@ -80,6 +80,7 @@ import {
   sendJumpGateJumpTransaction,
   sendCompleteFleetMissionReturnTransaction,
   sendRecallFleetMissionTransaction,
+  sendResolveFleetMissionBatchTransaction,
   sendResolveFleetMissionTransaction,
   sendAcceptAllianceInviteTransaction,
   sendAllianceBatchKickTransaction,
@@ -2581,6 +2582,29 @@ describe("walletFlow", () => {
         ],
       },
     ]);
+  });
+
+  // #858: players resolve their own due legs in one batch, always with the full gas envelope.
+  test("encodes the player mission batch resolution with an explicit gas limit", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const provider = mockProvider(async ({ method, params }) => {
+      requests.push({ method, params });
+      return "0xbatch";
+    });
+    const items = [{ missionId: "122002", leg: "return" as const }, { missionId: "7", leg: "arrival" as const }];
+
+    await expect(sendResolveFleetMissionBatchTransaction(provider, account, contract, items)).resolves.toBe("0xbatch");
+
+    const { encodeFunctionData, parseAbi } = await import("viem");
+    const expected = encodeFunctionData({
+      abi: parseAbi(["function resolveFleetMissionBatch((uint256 missionId, uint8 leg)[] items)"]),
+      args: [[{ missionId: 122002n, leg: 1 }, { missionId: 7n, leg: 0 }]],
+    });
+    expect(requests.at(-1)).toEqual({
+      method: "eth_sendTransaction",
+      params: [{ from: account, to: contract, data: expected, gas: "0x1000000" }],
+    });
+    await expect(sendResolveFleetMissionBatchTransaction(provider, account, contract, [])).rejects.toThrow("Select between 1 and 32");
   });
 
   test("encodes permissionless mission arrival and return resolution transactions", async () => {

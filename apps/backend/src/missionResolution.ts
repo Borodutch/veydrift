@@ -186,6 +186,8 @@ export type MissionResolutionSnapshot = {
   sharedAdmission?: { blocked: boolean; nextRetryAt: string | null };
   admission?: ReturnType<ResolverTransactionCoordinator["admissionSnapshot"]> | null;
   enabled: boolean;
+  /** #858: players resolve legs; the server sends none. */
+  manualLegResolution: boolean;
   resolverConfigured: boolean;
   resolverAddress: Address | null;
   intervalMs: number;
@@ -335,6 +337,7 @@ export class MissionResolutionService {
     const moonChanceLastFailure = this.moonChanceLastFailure();
     return {
       enabled: this.enabled,
+      manualLegResolution: Boolean(this.config.manualMissionResolution),
       resolverConfigured: Boolean(this.config.missionResolverAddress || this.config.missionResolverPrivateKey),
       resolverAddress: this.resolverAddress(),
       intervalMs: this.intervalMs,
@@ -462,8 +465,9 @@ export class MissionResolutionService {
         this.lastError = null;
         return;
       }
+      // #858: in manual mode players pay for legs; due legs are still scanned and reported.
       const results = await Promise.allSettled([
-        this.settleCandidates(settlementCandidates),
+        this.config.manualMissionResolution ? Promise.resolve() : this.settleCandidates(settlementCandidates),
         this.settleMoonChances()
       ]);
       // Keep the overlap guard until both lanes finish, even if an indexed read fails in one.
@@ -903,8 +907,10 @@ export class MissionResolutionService {
   private healthWarnings(dueArrivals: DueLegSnapshot, dueReturns: DueLegSnapshot): string[] {
     const warnings: string[] = [];
     const targetSeconds = this.promptnessTargetMs / 1_000;
-    if (!this.gamePaused && (dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
-    if (!this.gamePaused && (dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
+    // Manual mode (#858): due legs wait for players by design, so a backlog is not a fault.
+    const promptness = !this.gamePaused && !this.config.manualMissionResolution;
+    if (promptness && (dueArrivals.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_arrival_backlog");
+    if (promptness && (dueReturns.oldestAgeSeconds ?? 0) > targetSeconds) warnings.push("stale_due_return_backlog");
     if (this.gamePaused) warnings.push("game_paused");
     if (this.gamePauseAgeSeconds(this.now()) * 1_000 >= this.longPauseAlertAfterMs) {
       warnings.push("game_pause_long_running");

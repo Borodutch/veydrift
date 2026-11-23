@@ -13,6 +13,7 @@ import { defenseCatalog, shipCatalog, type ShipKey } from "../playableMvp";
 import type { Coordinates } from "../types";
 import { type BattleReport, type BattleReportParticipant, type RefereeBattleReport, type DefenderPlanetState, type FleetMissionSummary, type FleetMissionVisibilityResponse, type MissionDetailResponse, type QueueStateResponse, type TargetCombatIntel } from "../walletFlow";
 import {
+  DueMissionsBanner,
   isFleetRecallable,
   isMissionQueued,
   missionLifecycleActions,
@@ -20,6 +21,7 @@ import {
   missionWasRecalled,
   type MissionLifecycleAction,
 } from "./MissionControlPage";
+import { dueMissionResolutionItems, type DueMissionResolutionItem } from "./missionControlModel";
 import {
   MissionRouteCell,
   type MissionPlanetIdentity,
@@ -59,6 +61,7 @@ interface MissionDetailPageProps {
   onShareReport: () => void;
   onCounterplay: (mission: FleetMissionSummary, mode: "acsDefend") => void;
   onRecall: (missionId: string) => void;
+  onResolveMissions?: ((items: DueMissionResolutionItem[]) => void) | undefined;
   onRetry: () => void;
   onSelectCoordinates: (coords: Coordinates) => void;
   onSelectMoon?: ((coords: Coordinates) => void) | undefined;
@@ -80,6 +83,7 @@ export function MissionDetailPage({
   onShareReport,
   onCounterplay,
   onRecall,
+  onResolveMissions,
   onSelectCoordinates,
   onSelectMoon,
   onSelectPlayer,
@@ -146,6 +150,13 @@ export function MissionDetailPage({
         isGameUnavailableMessage(error) ? <GameUnavailableNotice /> : <Notice tone="danger">{error}</Notice>
       ) : mission ? (
         <>
+          {onResolveMissions && dueMissionResolutionItems({ outgoing: [mission] }).length > 0 ? (
+            <DueMissionsBanner
+              canTransact={canTransact}
+              count={1}
+              onResolve={() => onResolveMissions(dueMissionResolutionItems({ outgoing: [mission] }))}
+            />
+          ) : null}
           <MissionActions
             activePlanetId={activePlanetId}
             canTransact={canTransact}

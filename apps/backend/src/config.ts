@@ -45,6 +45,9 @@ export type BackendConfig = {
   // type-checking; loadBackendConfig always populates the default.
   pollIntervalMs?: number;
   missionResolutionEnabled: boolean;
+  // #858: players resolve their own mission legs; the resolver sends none (referee, randomness and
+  // moon-chance finalization keep running). Optional so existing fixtures keep type-checking.
+  manualMissionResolution?: boolean;
   missionBatch?: MissionBatchPolicy;
   missionResolverAddress?: `0x${string}`;
   missionResolverPrivateKey?: `0x${string}`;
@@ -451,6 +454,7 @@ export function loadBackendConfig(env: Record<string, string | undefined> = proc
       rebuildDeadlineMs,
       pollIntervalMs,
       missionResolutionEnabled: Boolean(missionResolverAddress || missionResolverPrivateKey),
+      manualMissionResolution: parseBooleanFlag(env.VEYDRIFT_MANUAL_MISSION_RESOLUTION),
       missionBatch,
       ...(missionResolverAddress ? { missionResolverAddress } : {}),
       ...(missionResolverPrivateKey ? { missionResolverPrivateKey } : {}),

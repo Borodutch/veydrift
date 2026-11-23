@@ -1545,6 +1545,7 @@ const GAME_SELECTORS = {
   launchBodyDeployBatch: toFunctionSelector("launchBodyDeployBatch(uint256,(uint256,(uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32,uint32),(uint128,uint128,uint128),uint16)[])"),
   moonSupplyBatchVersion: toFunctionSelector("moonSupplyBatchVersion()"),
   resolveFleetMission: "0xde09e7cf",
+  resolveFleetMissionBatch: "0x5fca0af0",
   startBuildingUpgrade: "0x165715e3",
   finishShipProduction: "0x7bd93154",
   finishResearch: "0xba2fbdc8",
@@ -2040,6 +2041,7 @@ const fleetMissionTransactionSelectors = new Set<string>([
   GAME_SELECTORS.launchBodyDeployBatch,
   GAME_SELECTORS.recallFleetMission,
   GAME_SELECTORS.resolveFleetMission,
+  GAME_SELECTORS.resolveFleetMissionBatch,
 ]);
 
 function isColonizeMissionContext(context: FleetMissionRevertContext | undefined): boolean {
@@ -4442,6 +4444,31 @@ export async function sendResolveFleetMissionTransaction(provider: Eip1193Provid
     from: account,
     to: contractAddress,
     data: encodeGameCall(GAME_SELECTORS.resolveFleetMission, [missionId]),
+    gas: FLEET_MISSION_RESOLUTION_GAS,
+  });
+}
+
+export type FleetMissionResolutionItem = { missionId: string; leg: "arrival" | "return" };
+
+/** The contract resolves at most 32 legs per call. */
+export const MAX_FLEET_MISSION_RESOLUTION_ITEMS = 32;
+
+/** `resolveFleetMissionBatch((uint256,uint8)[])`: leg 0 = arrival (or hold expiry), 1 = return. */
+export function encodeResolveFleetMissionBatchCall(items: readonly FleetMissionResolutionItem[]): string {
+  return `${GAME_SELECTORS.resolveFleetMissionBatch}${encodeAbiParameters(parseAbiParameters("(uint256,uint8)[]"), [
+    items.map((item) => [BigInt(item.missionId), item.leg === "return" ? 1 : 0] as const),
+  ]).slice(2)}`;
+}
+
+// The batch gives each leg the gas that is left and records an out-of-gas leg as Failed while the
+// transaction still succeeds, so a wallet estimate could "land" nothing. Always send the full
+// envelope; the player pays only for the gas used.
+export async function sendResolveFleetMissionBatchTransaction(provider: Eip1193Provider, account: string, contractAddress: string, items: readonly FleetMissionResolutionItem[]): Promise<string> {
+  if (items.length === 0 || items.length > MAX_FLEET_MISSION_RESOLUTION_ITEMS) throw new Error("Select between 1 and 32 missions to resolve.");
+  return sendWalletTransaction(provider, account, {
+    from: account,
+    to: contractAddress,
+    data: encodeResolveFleetMissionBatchCall(items),
     gas: FLEET_MISSION_RESOLUTION_GAS,
   });
 }

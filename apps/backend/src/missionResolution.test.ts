@@ -1002,6 +1002,42 @@ describe("MissionResolutionService", () => {
     });
   });
 
+  // #858: players resolve legs; the server only reports them.
+  test("manual mode sends no leg transactions and does not treat a due backlog as a fault", async () => {
+    let sent = 0;
+    const service = new MissionResolutionService({ ...config, manualMissionResolution: true }, {
+      candidateSource: {
+        missionResolutionCandidates: () => ({
+          arrivals: [arrival("1", "Deploy", "900")],
+          returns: [returnLeg("2", "Attack", "920")]
+        })
+      },
+      chainClient: {
+        async isMissionLegComplete() { return false; },
+        async listResolvableFleetMissions() { return []; },
+        async listReturnableFleetMissions() { return []; },
+        async resolveFleetMission() { sent += 1; return "0xarrival"; },
+        async completeFleetMissionReturn() { sent += 1; return "0xreturn"; },
+        async resolveMissionBatch() { sent += 1; throw new Error("no batches in manual mode"); }
+      } as never,
+      logger: silentLogger(),
+      now: () => 10_000_000,
+      promptnessTargetMs: 60_000
+    });
+
+    await service.tick();
+
+    expect(sent).toBe(0);
+    expect(service.snapshot()).toMatchObject({
+      manualLegResolution: true,
+      healthStatus: "healthy",
+      healthWarnings: [],
+      lastError: null,
+      dueArrivals: { count: 1 },
+      dueReturns: { count: 1 }
+    });
+  });
+
   test("degrades health while a stale due mission settlement is in flight", async () => {
     let nowMs = 959_000;
     let startedCount = 0;

@@ -764,15 +764,41 @@ describe("Mission Control battle reports", () => {
     expect(text).not.toContain("Join");
   });
 
-  test("never asks players to fund overdue mission completion", () => {
+  // #858: players resolve their own due legs; the server no longer pays for them.
+  test("offers one Resolve for every eligible due leg the player can see, earliest first", () => {
+    const now = Date.parse("2026-06-05T12:00:00.000Z");
+    const calls: unknown[] = [];
+    const page = MissionControlPage({
+      ...missionControlProps(now, {
+        incoming: [{ ...mission("41", "Attack", "Outbound", "0x2222222222222222222222222222222222222222", "8", "7", now - 60_000), resolutionEligible: true }],
+        outgoing: [
+          { ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), needsResolution: true, resolutionEligible: true },
+          { ...mission("33", "Transport", "Outbound", undefined, "7", "9", now - 240_000), resolutionEligible: false },
+        ],
+        returning: [{ ...mission("35", "Transport", "Returning", undefined, "7", "9", now - 600_000), returnAt: String(Math.floor((now - 120_000) / 1000)), resolutionEligible: true }],
+      }),
+      onResolveMissions: (items: unknown) => calls.push(items),
+    });
+    expect(collectText(page).join(" ")).toContain("3 missions are ready to resolve");
+    const resolve = findElements(page, "button").find((button) => collectText(button).includes("Resolve 3"));
+    expect(resolve).toBeDefined();
+    (resolve!.props as { onClick: () => void }).onClick();
+    expect(calls).toEqual([[
+      { missionId: "32", leg: "arrival", dueAt: Math.floor((now - 180_000) / 1000) },
+      { missionId: "35", leg: "return", dueAt: Math.floor((now - 120_000) / 1000) },
+      { missionId: "41", leg: "arrival", dueAt: Math.floor((now - 60_000) / 1000) },
+    ]]);
+  });
+
+  test("shows no Resolve when nothing is eligible", () => {
     const now = Date.parse("2026-06-05T12:00:00.000Z");
     const page = MissionControlPage({
       ...missionControlProps(now, {
-        outgoing: [{ ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), needsResolution: true, resolutionEligible: true }],
+        outgoing: [{ ...mission("32", "Transport", "Outbound", undefined, "7", "9", now - 180_000), resolutionEligible: false }],
       }),
+      onResolveMissions: () => {},
     });
-    const resolve = findElements(page, "button").find((button) => collectText(button).includes("Resolve"));
-    expect(resolve).toBeUndefined();
+    expect(findElements(page, "button").find((button) => collectText(button).includes("Resolve"))).toBeUndefined();
   });
 
   test("partitions own, incoming, and joinable active missions so My missions reflects fleet-slot usage", () => {

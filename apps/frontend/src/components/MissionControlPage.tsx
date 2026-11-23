@@ -1,7 +1,7 @@
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsDownUp, ChevronsUpDown, Clipboard, ExternalLink, Filter, List, Undo2 } from "lucide-preact";
 import type { ComponentChildren } from "preact";
 import { useMemo } from "preact/hooks";
-import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, combatProgressLabel, isMissionQueued, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
+import { type ActiveMissionTabKey, type MissionControlFilters, type MissionControlView, type PastMissionTabKey, ACTIVE_MISSION_DEFAULT_TAB, ACTIVE_MISSION_TABS, EMPTY_MISSION_CONTROL_FILTERS, EMPTY_PLANET_ARCHETYPE_LOOKUP, PAST_MISSION_TABS, combatProgressLabel, dueMissionResolutionItems, isMissionQueued, type DueMissionResolutionItem, missionPlanetCoordinateKey, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, persistMissionControlView, resolveMissionControlView } from "./missionControlModel";
 export { DEFAULT_MISSION_CONTROL_VIEW, EMPTY_MISSION_CONTROL_FILTERS, combatProgressLabel, isMissionQueued, buildMissionControlViewQuery, missionPlanetCoordinateKey, missionSystemKeysMissingUniverseArchetypes, missionTypeLabel, normalizeMissionControlFilters, normalizeMissionNumberSearch, parseMissionControlViewParams, persistMissionControlView, readPersistedMissionControlView, resolveMissionControlView, type MissionControlDirectionFilter, type MissionControlFilters, type MissionControlView } from "./missionControlModel";
 
 import { planetArtTypeForCoordinates } from "../data/mockUniverse";
@@ -131,6 +131,8 @@ interface MissionControlPageProps {
   onMissionNumberSearchChange?: ((value: string) => void) | undefined;
   onRecall: (missionId: string) => void;
   onRefresh: () => void;
+  // #858: players resolve their own due legs; the server no longer pays for them.
+  onResolveMissions?: ((items: DueMissionResolutionItem[]) => void) | undefined;
   reportMissionId?: string | undefined;
   reportUrlForMission?: ((missionId: string) => string) | undefined;
   planetArchetypesByCoordinate?: ReadonlyMap<string, PlanetType> | undefined;
@@ -246,6 +248,7 @@ export function renderMissionControlPage({
   onMissionFiltersChange,
   onMissionNumberSearchChange,
   onRecall,
+  onResolveMissions,
   planetArchetypesByCoordinate = EMPTY_PLANET_ARCHETYPE_LOOKUP,
   reportMissionId,
   reportUrlForMission,
@@ -287,6 +290,7 @@ export function renderMissionControlPage({
       ? mission.stationedDefenders.length > 0
       : (mission.counterplayDefenderMissionIds?.length ?? 0) > 0
   );
+  const dueResolutionItems = dueMissionResolutionItems(fleetVisibility);
   const hasVisibleExpandableRows = selectedActiveRows.length > 0
     || selectedPastRows.length > 0
     || hasFilteredStationedRows;
@@ -298,6 +302,14 @@ export function renderMissionControlPage({
           {actionState.label}
         </Notice>
       )}
+      {onResolveMissions && dueResolutionItems.length > 0 ? (
+        <DueMissionsBanner
+          canTransact={canTransact}
+          count={dueResolutionItems.length}
+          onResolve={() => onResolveMissions(dueResolutionItems)}
+          reason={transactionUnavailableReason}
+        />
+      ) : null}
       {initialLoading ? (
         <MissionControlSkeleton />
       ) : (
@@ -766,9 +778,9 @@ export function missionLifecycleActions({
       ? "No ships are available on the selected origin planet."
       : walletReason(canTransact, transactionUnavailableReason);
 
-  // Arrival/return completions normally reconcile through lazy on-chain settlement and the backend
-  // resolver. A separate emergency Resolve control appears beside the status pill only after that
-  // automation has been overdue for three minutes; it is intentionally not a general lifecycle order.
+  // Arrival/return completions are resolved by players (#858): the page-level DueMissionsBanner
+  // batches every eligible leg, and ordinary actions land due fleets lazily on-chain. The server
+  // no longer pays for plain legs, so this is not a per-row lifecycle order.
 
   if (context === "outgoing" && mission.status === "Outbound") {
     // Recall is only useful while the contract still accepts it. Once the cutoff closes, omit the
@@ -792,11 +804,8 @@ export function missionLifecycleActions({
     }
   }
 
-  // VEY-KANEO-465: fleet returns reconcile automatically — the backend mission
-  // resolver (`missionResolution.ts`) submits `completeFleetMissionReturn` once
-  // a return is due, crediting ships/cargo without any manual action. The former
-  // "Land fleet" button is removed so the frontend never drives a non-lazy
-  // complete/land action; returning rows are read-only until the backend lands them.
+  // Due returns land through the page-level DueMissionsBanner (#858) or any later action's lazy
+  // settlement; the backend no longer lands them.
 
   if (
     context === "incoming"
@@ -2794,6 +2803,28 @@ export function formatMissionTime(value: string, now: number): string {
   const timestamp = timestampToMs(value);
   if (timestamp === undefined) return "Unknown";
   return `${formatDurationUntil(timestamp, now)}\n${formatUserTimestamp(timestamp)}`;
+}
+
+// #858: due legs wait for a player to resolve them (one transaction, the player pays gas).
+export function DueMissionsBanner({ canTransact, count, onResolve, reason }: { canTransact: boolean; count: number; onResolve: () => void; reason?: string | undefined }) {
+  const label = count === 1 ? "1 mission is ready to resolve" : `${count} missions are ready to resolve`;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-50" data-due-missions-banner>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium">{label}</p>
+        <p className="mt-0.5 text-xs text-amber-100/80">Fleets land, battles are fought and cargo is delivered once someone resolves them. You pay the network gas. A battle can take several steps: resolve again if missions remain.</p>
+      </div>
+      <button
+        className={`inline-flex min-h-11 shrink-0 items-center justify-center rounded border px-4 text-sm font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200/70 ${canTransact ? "border-amber-300/50 bg-amber-300/20 text-amber-50 hover:bg-amber-300/30" : "cursor-not-allowed border-white/10 bg-white/[0.03] text-slate-500"}`}
+        disabled={!canTransact}
+        onClick={onResolve}
+        title={canTransact ? undefined : reason}
+        type="button"
+      >
+        {count === 1 ? "Resolve" : `Resolve ${count}`}
+      </button>
+    </div>
+  );
 }
 
 function Notice({ children, tone }: { children: preact.ComponentChildren; tone: "danger" | "info" | "success" }) {

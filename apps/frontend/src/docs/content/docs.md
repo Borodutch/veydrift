@@ -82,7 +82,7 @@ Open Galaxy or Raid Finder to choose a target. The mission composer previews rou
 - **ACS Attack**: lets allied fleets join an attack group when available.
 - **ACS Defend**: stations allied defense at a target until the hostile attack lands or the hold expires.
 
-Mission arrivals and returns update automatically. **Battle pending** or **Battle in progress** means the outcome is not known yet. Check the mission details again shortly for the result; no completion transaction is needed.
+When a fleet arrives or returns, Mission Control shows **Resolve**. Resolving lands every mission you can see that is ready in one transaction, and you pay the network gas. Anyone may resolve any ready mission, and your next action on an involved planet (launching, building, recalling) also lands its due fleets. A battle can take several steps: if missions remain after resolving, resolve again. **Battle pending** means the battle is waiting for its random seed or its result. Check the mission details again shortly.
 
 ### Common Mistakes
 

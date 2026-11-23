@@ -254,3 +254,24 @@ export function isMissionQueued(mission: FleetMissionSummary): boolean {
 export function combatProgressLabel(progress: { roundsCompleted: number; totalRounds: number }): string {
   return progress.roundsCompleted === 0 ? "Preparing battle" : "Battle in progress";
 }
+
+export type DueMissionResolutionItem = { missionId: string; leg: "arrival" | "return"; dueAt: number };
+
+// Players resolve their own due legs (#858): own arrivals/returns plus fleets arriving at their
+// planets. Only backend-simulated `resolutionEligible` legs qualify; earliest first, at most 32
+// (the contract's batch limit).
+export function dueMissionResolutionItems(
+  visibility: { incoming?: FleetMissionSummary[]; outgoing?: FleetMissionSummary[]; returning?: FleetMissionSummary[] } | undefined,
+): DueMissionResolutionItem[] {
+  const items = new Map<string, DueMissionResolutionItem>();
+  for (const mission of [...(visibility?.incoming ?? []), ...(visibility?.outgoing ?? []), ...(visibility?.returning ?? [])]) {
+    if (mission.resolutionEligible !== true) continue;
+    const leg = mission.status === "Outbound" ? "arrival"
+      : mission.status === "Returning" || mission.status === "Recalled" ? "return" : null;
+    if (!leg) continue;
+    const dueAt = Number(leg === "return" ? mission.returnAt
+      : mission.missionType === "DefenseHold" ? mission.defenseHoldUntil ?? mission.returnAt : mission.arrivalAt);
+    items.set(`${mission.missionId}:${leg}`, { missionId: mission.missionId, leg, dueAt: Number.isFinite(dueAt) ? dueAt : 0 });
+  }
+  return [...items.values()].sort((a, b) => a.dueAt - b.dueAt || Number(a.missionId) - Number(b.missionId)).slice(0, 32);
+}
